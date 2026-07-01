@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>M3U Playlist Studio (Compact)</title>
+    <style>
+        :root {
+            --bg-color: #0f0f11;
+            --card-bg: #16161a;
+            --text-color: #e2e8f0;
+            --accent-color: #4f46e5;
+            --border-color: #24242b;
+            --success: #16a34a;
+            --error: #dc2626;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 10px;
+            font-size: 12px;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 5px;
+        }
+
+        header h1 { font-size: 16px; margin: 0; }
+        header p { margin: 0; color: #94a3b8; font-size: 11px; }
+
+        .controls {
+            background-color: var(--card-bg);
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        button, input, select {
+            background-color: #222227;
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        button:hover { background-color: var(--accent-color); }
+        input[type="file"] { display: none; }
+        
+        .file-label {
+            background-color: var(--accent-color);
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .stats {
+            margin-left: auto;
+            font-weight: bold;
+            color: #94a3b8;
+        }
+
+        .table-container {
+            overflow-x: auto;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            max-height: 78vh;
+            overflow-y: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th, td {
+            padding: 4px 8px;
+            border-bottom: 1px solid var(--border-color);
+            white-space: nowrap;
+        }
+
+        th {
+            background-color: #1e1e24;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #94a3b8;
+        }
+
+        tr:hover { background-color: #1c1c22; }
+
+        .channel-logo {
+            width: 20px;
+            height: 20px;
+            object-fit: contain;
+            background: #222227;
+            border-radius: 2px;
+            vertical-align: middle;
+        }
+
+        .editable {
+            background: transparent;
+            border: 1px dashed transparent;
+            padding: 2px 4px;
+            outline: none;
+            max-width: 250px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .editable:focus {
+            background: #222227;
+            border: 1px solid var(--accent-color);
+            border-radius: 2px;
+            max-width: none;
+            white-space: normal;
+        }
+
+        .group-select {
+            min-width: 140px;
+            max-width: 180px;
+            padding: 3px 6px;
+        }
+
+        .logo-editor {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .logo-input {
+            width: 170px;
+            cursor: text;
+        }
+
+        .epg-input {
+            width: 130px;
+            cursor: text;
+        }
+
+        .status-badge {
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: bold;
+            text-align: center;
+            display: inline-block;
+            min-width: 55px;
+        }
+
+        .status-unchecked { background: #4b5563; }
+        .status-online { background: var(--success); }
+        .status-offline { background: var(--error); }
+
+        .btn-danger { 
+            background-color: transparent; 
+            border: none; 
+            padding: 2px 4px;
+        }
+        .btn-danger:hover { background-color: var(--error); }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <div>
+            <h1>📺 M3U Playlist Studio</h1>
+            <p>Click directly into any cell to edit data instantly.</p>
+        </div>
+        <div class="stats" id="statsDisplay">Channels: 0</div>
+    </header>
+
+    <div class="controls">
+        <label class="file-label" for="fileInput">📁 Load File</label>
+        <input type="file" id="fileInput" accept=".m3u,.m3u8">
+
+        <input type="text" id="urlInput" placeholder="Paste M3U Link URL...">
+        <button id="fetchUrlBtn">🌐 Fetch Link</button>
+
+        <button id="checkBtn" disabled>⚡ Check Status</button>
+        <button id="sortBtn" disabled>🔀 Sort A-Z</button>
+        <button id="autoSortBtn" disabled>🧭 Auto Sort Groups</button>
+        <select id="categoryOrderSelect" disabled></select>
+        <button id="categoryUpBtn" disabled>↑ Category</button>
+        <button id="categoryDownBtn" disabled>↓ Category</button>
+        
+        <select id="categoryFilter" disabled>
+            <option value="all">All Categories</option>
+        </select>
+
+        <button id="exportBtn" style="background-color: var(--success); margin-left: auto;" disabled>💾 Export M3U</button>
+    </div>
+
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 30px;">#</th>
+                    <th style="width: 220px;">Logo URL</th>
+                    <th>Channel Name</th>
+                    <th>Category Group</th>
+                    <th>EPG ID</th>
+                    <th>Stream URL</th>
+                    <th style="width: 80px;">Status</th>
+                    <th style="width: 40px;">Action</th>
+                </tr>
+            </thead>
+            <tbody id="channelTableBody">
+                </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    let playlistChannels = [];
+    let originalOrder = [];
+
+    // Elements
+    const fileInput = document.getElementById('fileInput');
+    const urlInput = document.getElementById('urlInput');
+    const fetchUrlBtn = document.getElementById('fetchUrlBtn');
+    const checkBtn = document.getElementById('checkBtn');
+    const sortBtn = document.getElementById('sortBtn');
+    const autoSortBtn = document.getElementById('autoSortBtn');
+    const categoryOrderSelect = document.getElementById('categoryOrderSelect');
+    const categoryUpBtn = document.getElementById('categoryUpBtn');
+    const categoryDownBtn = document.getElementById('categoryDownBtn');
+    const categoryFilter = document.getElementById('categoryFilter');
+    const exportBtn = document.getElementById('exportBtn');
+    const tableBody = document.getElementById('channelTableBody');
+    const statsDisplay = document.getElementById('statsDisplay');
+
+    // 1. Process Local M3U File
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => loadData(evt.target.result);
+        reader.readAsText(file);
+    });
+
+    // 2. Process Remote M3U Link via CORS Proxy
+    function normalizePlaylistUrl(url) {
+        let cleanUrl = url.trim();
+        cleanUrl = cleanUrl.replace('github.com/', 'raw.githubusercontent.com/');
+        cleanUrl = cleanUrl.replace('/blob/', '/');
+        cleanUrl = cleanUrl.replace('/refs/heads/', '/');
+        return cleanUrl;
+    }
+
+    async function fetchPlaylistText(url) {
+        const cleanUrl = normalizePlaylistUrl(url);
+        const urlsToTry = [
+            cleanUrl,
+            `https://corsproxy.io/?${encodeURIComponent(cleanUrl)}`,
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(cleanUrl)}`
+        ];
+
+        let lastError = null;
+        for (const fetchUrl of urlsToTry) {
+            try {
+                const response = await fetch(fetchUrl, { cache: 'no-store' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.text();
+                if (!data.includes('#EXTM3U') && !data.includes('#EXTINF')) {
+                    throw new Error('Response was not an M3U playlist');
+                }
+                return data;
+            } catch (err) {
+                lastError = err;
+            }
+        }
+
+        throw lastError || new Error('Unable to fetch playlist');
+    }
+
+    fetchUrlBtn.addEventListener('click', async () => {
+        const url = urlInput.value.trim();
+        if (!url) return alert('Please paste an M3U URL link first.');
+        
+        fetchUrlBtn.innerText = '⏳ Processing...';
+        fetchUrlBtn.disabled = true;
+        
+        try {
+            const data = await fetchPlaylistText(url);
+            loadData(data);
+        } catch (err) {
+            alert(`Failed fetching M3U: ${err.message}`);
+        } finally {
+            fetchUrlBtn.innerText = '🌐 Fetch Link';
+            fetchUrlBtn.disabled = false;
+        }
+    });
+
+    function loadData(textData) {
+        parseM3U(textData);
+        normalizePlaylistGroups();
+        enableControls();
+        populateCategoryOrderSelect();
+        populateCategories();
+        filterAndRender();
+    }
+
+    // 3. Bulletproof Multi-Format Parser
+    function parseM3U(data) {
+        const lines = data.split(/\r?\n/);
+        playlistChannels = [];
+        let currentChannel = null;
+
+        for (let i = 0; i < lines.length; i++) {
+            let line = lines[i].trim();
+            if (!line) continue;
+
+            if (line.startsWith('#EXTINF:')) {
+                const commaIndex = line.lastIndexOf(',');
+                let name = commaIndex !== -1 ? line.substring(commaIndex + 1).trim() : 'Unknown Channel';
+                
+                const logoMatch = line.match(/tvg-logo="([^"]*)"/i);
+                let logo = logoMatch ? logoMatch[1] : '';
+
+                const epgMatch = line.match(/tvg-id="([^"]*)"/i);
+                let epgId = epgMatch ? epgMatch[1] : '';
+
+                const groupMatch = line.match(/group-title="([^"]*)"/i);
+                let group = groupMatch ? groupMatch[1] : 'Uncategorized';
+
+                currentChannel = {
+                    name: name,
+                    logo: logo,
+                    epgId: epgId,
+                    group: group,
+                    status: 'unchecked'
+                };
+            } else if (line.startsWith('http') || line.startsWith('rtmp') || line.startsWith('rtsp')) {
+                if (currentChannel) {
+                    currentChannel.url = line;
+                    playlistChannels.push(currentChannel);
+                    currentChannel = null;
+                } else {
+                    // Handle stray URLs without parent #EXTINF lines safely
+                    playlistChannels.push({
+                        name: line.split('/').pop() || 'Untitled Stream',
+                        logo: '',
+                        epgId: '',
+                        group: 'Uncategorized',
+                        url: line,
+                        status: 'unchecked'
+                    });
+                }
+            }
+        }
+        originalOrder = [...playlistChannels];
+        updateStats();
+    }
+
+    function escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function getGroupOptions(currentGroup) {
+        return [...autoCategoryOrder];
+    }
+
+    // 4. Render Layout
+    function renderTable(channels) {
+        tableBody.innerHTML = '';
+        channels.forEach((ch, idx) => {
+            const channelIndex = playlistChannels.indexOf(ch);
+            const groupOptions = getGroupOptions(ch.group);
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="color: #64748b;">${idx + 1}</td>
+                <td>
+                    <div class="logo-editor">
+                        <img class="channel-logo" src="${escapeHtml(ch.logo || '')}" onerror="this.style.display='none'">
+                        <input class="logo-input" type="text" value="${escapeHtml(ch.logo || '')}" oninput="this.previousElementSibling.src = this.value; this.previousElementSibling.style.display = this.value ? '' : 'none';" onblur="updateField(${channelIndex}, 'logo', this.value)">
+                    </div>
+                </td>
+                <td><div class="editable" contenteditable="true" onblur="updateField(${channelIndex}, 'name', this.innerText)">${ch.name}</div></td>
+                <td>
+                    <select class="group-select" onchange="updateField(${channelIndex}, 'group', this.value)">
+                        ${groupOptions.map(group => `<option value="${escapeHtml(group)}" ${group === ch.group ? 'selected' : ''}>${escapeHtml(group)}</option>`).join('')}
+                    </select>
+                </td>
+                <td><input class="epg-input" type="text" value="${escapeHtml(ch.epgId || '')}" onblur="updateField(${channelIndex}, 'epgId', this.value)"></td>
+                <td><div class="editable" contenteditable="true" onblur="updateField(${channelIndex}, 'url', this.innerText)">${ch.url}</div></td>
+                <td><span class="status-badge status-${ch.status}" id="status-${channelIndex}">${ch.status.toUpperCase()}</span></td>
+                <td><button class="btn-danger" onclick="deleteChannel(${channelIndex})">🗑️</button></td>
+            `;
+            tableBody.appendChild(tr);
+        });
+    }
+
+    // 5. Modifications Management
+    window.updateField = function(index, field, value) {
+        playlistChannels[index][field] = field === 'group' && !autoCategoryOrder.includes(value)
+            ? 'Entertainment'
+            : value.trim();
+        if (field === 'group') {
+            sortByCategoryOrder();
+            isSorted = false;
+            sortBtn.innerText = '🔀 Sort A-Z';
+            populateCategories();
+            filterAndRender();
+        }
+    };
+
+    window.deleteChannel = function(index) {
+        playlistChannels.splice(index, 1);
+        updateStats();
+        populateCategories();
+        filterAndRender();
+    };
+
+    // 6. Network Stream Validator
+    async function checkStreamUrl(url) {
+        const cleanUrl = url.trim();
+        if (!cleanUrl) return false;
+
+        const attempts = [
+            () => fetch(cleanUrl, { method: 'GET', mode: 'no-cors', cache: 'no-store' }),
+            () => fetch(`https://corsproxy.io/?url=${encodeURIComponent(cleanUrl)}`, { method: 'GET', cache: 'no-store' })
+        ];
+
+        for (const attempt of attempts) {
+            try {
+                const response = await attempt();
+                if (response.type === 'opaque' || response.ok) return true;
+            } catch (err) {
+                // Try the next strategy. Some streams block browser CORS but still load directly.
+            }
+        }
+
+        return false;
+    }
+
+    checkBtn.addEventListener('click', async () => {
+        checkBtn.disabled = true;
+        checkBtn.innerText = '⏳ Checking...';
+
+        for (let i = 0; i < playlistChannels.length; i++) {
+            const badge = document.getElementById(`status-${i}`);
+            if (badge) badge.innerText = 'TRYING';
+            try {
+                const isOnline = await checkStreamUrl(playlistChannels[i].url);
+                playlistChannels[i].status = isOnline ? 'online' : 'offline';
+            } catch (err) {
+                playlistChannels[i].status = 'offline';
+            }
+            if (badge) {
+                badge.className = `status-badge status-${playlistChannels[i].status}`;
+                badge.innerText = playlistChannels[i].status.toUpperCase();
+            }
+        }
+        checkBtn.disabled = false;
+        checkBtn.innerText = '⚡ Check Status';
+    });
+
+    // 7. Sort Engines
+    let isSorted = false;
+    sortBtn.addEventListener('click', () => {
+        if (!isSorted) {
+            playlistChannels.sort((a, b) => a.name.localeCompare(b.name));
+            sortBtn.innerText = '🔄 Reset Order';
+        } else {
+            playlistChannels = [...originalOrder];
+            sortBtn.innerText = '🔀 Sort A-Z';
+        }
+        isSorted = !isSorted;
+        filterAndRender();
+    });
+
+    let autoCategoryOrder = ['Movies', 'News', 'Philippines', 'Entertainment', 'Sports', 'Documentary', 'Kids'];
+    const autoCategoryRules = [
+        {
+            group: 'Philippines',
+            terms: [
+                'philippines', 'philippine', 'pinoy', 'filipino', 'tagalog', 'kapamilya', 'kapuso',
+                'gma', 'gma network', 'gma main channel', 'gtv', 'heart of asia', 'i heart movies', 'hallypop', 'pinoy hits',
+                'tv5', 'cignal', 'rptv', 'one ph', 'one news ph', 'one sports',
+                'abs-cbn', 'abs cbn', 'a2z', 'a2z channel 11', 'alltv', 'alltv channel 2',
+                'ptv', 'people television network', 'congress tv', 'ptv sports', 'radyo pilipinas', 'radyo pilipinas 1', 'ibc', 'ibc 13',
+                'beam tv', 'prtv', 'prtv prime media', 'blast sports', 'knowledge channel', 'bilyonaryo', 'bilyonaryo news',
+                'solarflix', 'solar sports', 'shop tv',
+                'net 25', 'aliw', 'aliw channel', 'dwiz', 'dwiz news tv', 'eagle broadcasting',
+                'inc tv', 'untv', 'truth channel', 'light tv', 'hope channel philippines', 'tv maria',
+                'rj digitv', 'timeless tv', 'rock mnl', 'smni',
+                'anc', 'teleradyo', 'tele radyo', 'dzbb', 'dzrh', 'dzmm', 'cnn philippines',
+                'buko', 'cinemo', 'cinema one', 'pbo', 'pinoy box office', 'viva cinema', 'viva tv', 'sari sari', 'sari-sari', 'jeepney tv',
+                'myx philippines', 'pba', 'uaap'
+            ]
+        },
+        { group: 'Movies', terms: ['movie', 'movies', 'cinema', 'film', 'hbo', 'cinemax', 'fox movies', 'thrill', 'hits', 'screen'] },
+        { group: 'News', terms: ['news', 'cnn', 'bbc', 'cnbc', 'bloomberg', 'al jazeera', 'fox news'] },
+        { group: 'Entertainment', terms: ['entertainment', 'variety', 'lifestyle', 'music', 'mtv', 'myx', 'viva', 'comedy', 'drama', 'series', 'reality'] },
+        { group: 'Sports', terms: ['sports', 'sport', 'nba', 'nfl', 'mlb', 'ufc', 'wwe', 'boxing', 'fight', 'espn', 'bein', 'premier', 'football', 'soccer', 'tennis', 'golf'] },
+        { group: 'Documentary', terms: ['documentary', 'docs', 'history', 'discovery', 'nat geo', 'national geographic', 'animal planet', 'science', 'knowledge'] },
+        { group: 'Kids', terms: ['kids', 'kid', 'cartoon', 'nick', 'nickelodeon', 'disney', 'boomerang', 'baby', 'junior', 'pbs kids'] }
+    ];
+
+    function termMatches(text, term) {
+        const normalizedText = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+        const normalizedTerm = term.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        const compactText = text.toLowerCase().replace(/[^a-z0-9]+/g, '');
+        const compactTerm = term.toLowerCase().replace(/[^a-z0-9]+/g, '');
+        return normalizedTerm && (
+            normalizedText.includes(` ${normalizedTerm} `) ||
+            (compactTerm.length >= 5 && compactText.includes(compactTerm))
+        );
+    }
+
+    function normalizeAutoCategory(channel) {
+        const haystack = `${channel.group || ''} ${channel.name || ''}`.toLowerCase();
+        const matchedRule = autoCategoryRules.find(rule => rule.terms.some(term => termMatches(haystack, term)));
+        if (matchedRule) return matchedRule.group;
+
+        const existingGroup = autoCategoryOrder.find(group => (channel.group || '').toLowerCase() === group.toLowerCase());
+        return existingGroup || 'Entertainment';
+    }
+
+    function normalizePlaylistGroups() {
+        playlistChannels.forEach(ch => {
+            ch.group = normalizeAutoCategory(ch);
+        });
+        sortByCategoryOrder();
+        originalOrder = [...playlistChannels];
+    }
+
+    function autoCategoryRank(group) {
+        const rank = autoCategoryOrder.indexOf(group);
+        return rank === -1 ? autoCategoryOrder.length : rank;
+    }
+
+    function sortByCategoryOrder() {
+        playlistChannels.sort((a, b) => {
+            const rankDiff = autoCategoryRank(a.group) - autoCategoryRank(b.group);
+            if (rankDiff !== 0) return rankDiff;
+            return a.name.localeCompare(b.name);
+        });
+    }
+
+    function populateCategoryOrderSelect() {
+        const currentSelection = categoryOrderSelect.value || autoCategoryOrder[0];
+        categoryOrderSelect.innerHTML = '';
+        autoCategoryOrder.forEach((category, index) => {
+            const opt = document.createElement('option');
+            opt.value = category;
+            opt.innerText = `${index + 1}. ${category}`;
+            categoryOrderSelect.appendChild(opt);
+        });
+        categoryOrderSelect.value = autoCategoryOrder.includes(currentSelection) ? currentSelection : autoCategoryOrder[0];
+    }
+
+    function moveSelectedCategory(direction) {
+        const selectedCategory = categoryOrderSelect.value;
+        const currentIndex = autoCategoryOrder.indexOf(selectedCategory);
+        const nextIndex = currentIndex + direction;
+        if (currentIndex === -1 || nextIndex < 0 || nextIndex >= autoCategoryOrder.length) return;
+
+        [autoCategoryOrder[currentIndex], autoCategoryOrder[nextIndex]] = [autoCategoryOrder[nextIndex], autoCategoryOrder[currentIndex]];
+        sortByCategoryOrder();
+        isSorted = false;
+        sortBtn.innerText = '🔀 Sort A-Z';
+        populateCategoryOrderSelect();
+        categoryOrderSelect.value = selectedCategory;
+        populateCategories();
+        filterAndRender();
+    }
+
+    categoryUpBtn.addEventListener('click', () => moveSelectedCategory(-1));
+    categoryDownBtn.addEventListener('click', () => moveSelectedCategory(1));
+
+    autoSortBtn.addEventListener('click', () => {
+        playlistChannels.forEach(ch => {
+            ch.group = normalizeAutoCategory(ch);
+        });
+
+        sortByCategoryOrder();
+
+        isSorted = false;
+        sortBtn.innerText = '🔀 Sort A-Z';
+        categoryFilter.value = 'all';
+        populateCategories();
+        filterAndRender();
+    });
+
+    // 8. Auto Category Sorting Filters
+    function populateCategories() {
+        const currentSelection = categoryFilter.value;
+        const categories = [...autoCategoryOrder];
+        categoryFilter.innerHTML = '<option value="all">All Categories</option>';
+        categories.forEach(cat => {
+            const opt = document.createElement('option');
+            opt.value = cat; opt.innerText = cat;
+            categoryFilter.appendChild(opt);
+        });
+        categoryFilter.value = currentSelection === 'all' || categories.includes(currentSelection) ? currentSelection : 'all';
+    }
+
+    categoryFilter.addEventListener('change', filterAndRender);
+
+    function filterAndRender() {
+        const selectedCat = categoryFilter.value;
+        if (selectedCat === 'all') {
+            renderTable(playlistChannels);
+        } else {
+            const filtered = playlistChannels.filter(ch => ch.group === selectedCat);
+            renderTable(filtered);
+        }
+    }
+
+    // 9. Structured Exporter
+    exportBtn.addEventListener('click', () => {
+        let m3uContent = "#EXTM3U\n";
+        playlistChannels.forEach(ch => {
+            m3uContent += `#EXTINF:-1 tvg-id="${ch.epgId || ''}" tvg-logo="${ch.logo}" group-title="${ch.group}",${ch.name}\n${ch.url}\n`;
+        });
+        const blob = new Blob([m3uContent], { type: 'text/plain' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'clean_playlist.m3u';
+        a.click();
+    });
+
+    function enableControls() {
+        checkBtn.disabled = false; sortBtn.disabled = false; autoSortBtn.disabled = false;
+        categoryOrderSelect.disabled = false; categoryUpBtn.disabled = false; categoryDownBtn.disabled = false;
+        categoryFilter.disabled = false; exportBtn.disabled = false;
+    }
+
+    function updateStats() {
+        statsDisplay.innerText = `Channels: ${playlistChannels.length}`;
+    }
+
+    populateCategoryOrderSelect();
+</script>
+</body>
+</html>
