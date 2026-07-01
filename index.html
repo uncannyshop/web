@@ -63,6 +63,11 @@
             font-size: 12px;
         }
 
+        #channelSearchInput {
+            min-width: 190px;
+            cursor: text;
+        }
+
         button:hover { background-color: var(--accent-color); }
         input[type="file"] { display: none; }
         
@@ -174,6 +179,7 @@
         .status-unchecked { background: #4b5563; }
         .status-online { background: var(--success); }
         .status-offline { background: var(--error); }
+        .status-geoblocked { background: #d97706; }
 
         .btn-danger { 
             background-color: transparent; 
@@ -181,6 +187,77 @@
             padding: 2px 4px;
         }
         .btn-danger:hover { background-color: var(--error); }
+
+        .text-editor-panel {
+            display: none;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            margin-bottom: 10px;
+            padding: 8px;
+        }
+
+        .text-editor-panel.active { display: block; }
+
+        #m3uTextEditor {
+            width: 100%;
+            min-height: 260px;
+            box-sizing: border-box;
+            background: #101014;
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 8px;
+            font-family: Consolas, Monaco, monospace;
+            font-size: 12px;
+            resize: vertical;
+        }
+
+        .text-editor-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            margin-top: 8px;
+            align-items: center;
+        }
+
+        .text-save-status {
+            color: #94a3b8;
+            margin-right: auto;
+        }
+
+        .progress-panel {
+            display: none;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 8px;
+            margin-bottom: 10px;
+        }
+
+        .progress-panel.active { display: block; }
+
+        .progress-row {
+            display: flex;
+            justify-content: space-between;
+            color: #94a3b8;
+            margin-bottom: 6px;
+            font-weight: bold;
+        }
+
+        .progress-track {
+            height: 10px;
+            background: #222227;
+            border-radius: 999px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            width: 0%;
+            height: 100%;
+            background: var(--accent-color);
+            transition: width 0.15s ease;
+        }
     </style>
 </head>
 <body>
@@ -197,13 +274,19 @@
     <div class="controls">
         <label class="file-label" for="fileInput">📁 Load File</label>
         <input type="file" id="fileInput" accept=".m3u,.m3u8">
+        <label class="file-label" for="mergeFileInput">➕ Merge File</label>
+        <input type="file" id="mergeFileInput" accept=".m3u,.m3u8">
 
         <input type="text" id="urlInput" placeholder="Paste M3U Link URL...">
         <button id="fetchUrlBtn">🌐 Fetch Link</button>
+        <button id="mergeUrlBtn">➕ Merge Link</button>
 
         <button id="checkBtn" disabled>⚡ Check Status</button>
         <button id="sortBtn" disabled>🔀 Sort A-Z</button>
         <button id="autoSortBtn" disabled>🧭 Auto Sort Groups</button>
+        <button id="deleteDuplicatesBtn" disabled>🧹 Delete Duplicates</button>
+        <button id="deleteOfflineBtn" disabled>🗑️ Delete Offline</button>
+        <button id="deleteGeoblockedBtn" disabled>🚫 Delete Geoblocked</button>
         <select id="categoryOrderSelect" disabled></select>
         <button id="categoryUpBtn" disabled>↑ Category</button>
         <button id="categoryDownBtn" disabled>↓ Category</button>
@@ -212,7 +295,30 @@
             <option value="all">All Categories</option>
         </select>
 
+        <input type="search" id="channelSearchInput" placeholder="Search channels..." disabled>
+
+        <button id="textViewBtn" disabled>📝 Text View</button>
         <button id="exportBtn" style="background-color: var(--success); margin-left: auto;" disabled>💾 Export M3U</button>
+    </div>
+
+    <div class="text-editor-panel" id="textEditorPanel">
+        <textarea id="m3uTextEditor" spellcheck="false"></textarea>
+        <div class="text-editor-actions">
+            <span class="text-save-status" id="textSaveStatus"></span>
+            <button id="refreshTextBtn" disabled>↻ Refresh Text</button>
+            <button id="applyTextBtn" disabled>💾 Save Text</button>
+            <button id="closeTextBtn">Close</button>
+        </div>
+    </div>
+
+    <div class="progress-panel" id="checkProgressPanel">
+        <div class="progress-row">
+            <span id="checkProgressText">Checking channels...</span>
+            <span id="checkProgressPercent">0%</span>
+        </div>
+        <div class="progress-track">
+            <div class="progress-fill" id="checkProgressFill"></div>
+        </div>
     </div>
 
     <div class="table-container">
@@ -241,18 +347,35 @@
 
     // Elements
     const fileInput = document.getElementById('fileInput');
+    const mergeFileInput = document.getElementById('mergeFileInput');
     const urlInput = document.getElementById('urlInput');
     const fetchUrlBtn = document.getElementById('fetchUrlBtn');
+    const mergeUrlBtn = document.getElementById('mergeUrlBtn');
     const checkBtn = document.getElementById('checkBtn');
     const sortBtn = document.getElementById('sortBtn');
     const autoSortBtn = document.getElementById('autoSortBtn');
+    const deleteDuplicatesBtn = document.getElementById('deleteDuplicatesBtn');
+    const deleteOfflineBtn = document.getElementById('deleteOfflineBtn');
+    const deleteGeoblockedBtn = document.getElementById('deleteGeoblockedBtn');
     const categoryOrderSelect = document.getElementById('categoryOrderSelect');
     const categoryUpBtn = document.getElementById('categoryUpBtn');
     const categoryDownBtn = document.getElementById('categoryDownBtn');
     const categoryFilter = document.getElementById('categoryFilter');
+    const channelSearchInput = document.getElementById('channelSearchInput');
+    const textViewBtn = document.getElementById('textViewBtn');
+    const textEditorPanel = document.getElementById('textEditorPanel');
+    const m3uTextEditor = document.getElementById('m3uTextEditor');
+    const textSaveStatus = document.getElementById('textSaveStatus');
+    const refreshTextBtn = document.getElementById('refreshTextBtn');
+    const applyTextBtn = document.getElementById('applyTextBtn');
+    const closeTextBtn = document.getElementById('closeTextBtn');
     const exportBtn = document.getElementById('exportBtn');
     const tableBody = document.getElementById('channelTableBody');
     const statsDisplay = document.getElementById('statsDisplay');
+    const checkProgressPanel = document.getElementById('checkProgressPanel');
+    const checkProgressText = document.getElementById('checkProgressText');
+    const checkProgressPercent = document.getElementById('checkProgressPercent');
+    const checkProgressFill = document.getElementById('checkProgressFill');
 
     // 1. Process Local M3U File
     fileInput.addEventListener('change', (e) => {
@@ -261,6 +384,16 @@
         const reader = new FileReader();
         reader.onload = (evt) => loadData(evt.target.result);
         reader.readAsText(file);
+        fileInput.value = '';
+    });
+
+    mergeFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => mergeData(evt.target.result);
+        reader.readAsText(file);
+        mergeFileInput.value = '';
     });
 
     // 2. Process Remote M3U Link via CORS Proxy
@@ -316,6 +449,24 @@
         }
     });
 
+    mergeUrlBtn.addEventListener('click', async () => {
+        const url = urlInput.value.trim();
+        if (!url) return alert('Please paste an M3U URL link first.');
+        
+        mergeUrlBtn.innerText = '⏳ Merging...';
+        mergeUrlBtn.disabled = true;
+        
+        try {
+            const data = await fetchPlaylistText(url);
+            mergeData(data);
+        } catch (err) {
+            alert(`Failed merging M3U: ${err.message}`);
+        } finally {
+            mergeUrlBtn.innerText = '➕ Merge Link';
+            mergeUrlBtn.disabled = false;
+        }
+    });
+
     function loadData(textData) {
         parseM3U(textData);
         normalizePlaylistGroups();
@@ -325,10 +476,43 @@
         filterAndRender();
     }
 
+    function mergeData(textData) {
+        const beforeCount = playlistChannels.length;
+        parseM3U(textData, true);
+        normalizePlaylistGroups();
+        enableControls();
+        populateCategoryOrderSelect();
+        populateCategories();
+        filterAndRender();
+        if (textEditorPanel.classList.contains('active')) {
+            m3uTextEditor.value = buildM3UContent();
+            textSaveStatus.innerText = 'Merged playlist into table';
+        }
+        alert(`Merged ${playlistChannels.length - beforeCount} channel${playlistChannels.length - beforeCount === 1 ? '' : 's'}.`);
+    }
+
+    function reloadFromText(textData) {
+        loadData(textData);
+    }
+
     // 3. Bulletproof Multi-Format Parser
-    function parseM3U(data) {
+    function parseExtinfAttributes(line) {
+        const commaIndex = line.lastIndexOf(',');
+        const attrText = commaIndex !== -1 ? line.substring(0, commaIndex) : line;
+        const attrs = {};
+        const attrOrder = [];
+        const attrRegex = /([\w:-]+)="([^"]*)"/g;
+        let match;
+        while ((match = attrRegex.exec(attrText)) !== null) {
+            attrs[match[1]] = match[2];
+            attrOrder.push(match[1]);
+        }
+        return { attrs, attrOrder };
+    }
+
+    function parseM3U(data, append = false) {
         const lines = data.split(/\r?\n/);
-        playlistChannels = [];
+        if (!append) playlistChannels = [];
         let currentChannel = null;
 
         for (let i = 0; i < lines.length; i++) {
@@ -338,6 +522,7 @@
             if (line.startsWith('#EXTINF:')) {
                 const commaIndex = line.lastIndexOf(',');
                 let name = commaIndex !== -1 ? line.substring(commaIndex + 1).trim() : 'Unknown Channel';
+                const extinfData = parseExtinfAttributes(line);
                 
                 const logoMatch = line.match(/tvg-logo="([^"]*)"/i);
                 let logo = logoMatch ? logoMatch[1] : '';
@@ -353,6 +538,9 @@
                     logo: logo,
                     epgId: epgId,
                     group: group,
+                    attrs: extinfData.attrs,
+                    attrOrder: extinfData.attrOrder,
+                    props: [],
                     status: 'unchecked'
                 };
             } else if (line.startsWith('http') || line.startsWith('rtmp') || line.startsWith('rtsp')) {
@@ -367,10 +555,15 @@
                         logo: '',
                         epgId: '',
                         group: 'Uncategorized',
+                        attrs: {},
+                        attrOrder: [],
+                        props: [],
                         url: line,
                         status: 'unchecked'
                     });
                 }
+            } else if (currentChannel && line.startsWith('#')) {
+                currentChannel.props.push(line);
             }
         }
         originalOrder = [...playlistChannels];
@@ -412,7 +605,7 @@
                 </td>
                 <td><input class="epg-input" type="text" value="${escapeHtml(ch.epgId || '')}" onblur="updateField(${channelIndex}, 'epgId', this.value)"></td>
                 <td><div class="editable" contenteditable="true" onblur="updateField(${channelIndex}, 'url', this.innerText)">${ch.url}</div></td>
-                <td><span class="status-badge status-${ch.status}" id="status-${channelIndex}">${ch.status.toUpperCase()}</span></td>
+                <td><span class="status-badge status-${ch.status}" id="status-${channelIndex}">${statusLabel(ch.status)}</span></td>
                 <td><button class="btn-danger" onclick="deleteChannel(${channelIndex})">🗑️</button></td>
             `;
             tableBody.appendChild(tr);
@@ -431,6 +624,10 @@
             populateCategories();
             filterAndRender();
         }
+        if (textEditorPanel.classList.contains('active')) {
+            m3uTextEditor.value = buildM3UContent();
+            textSaveStatus.innerText = 'Text updated from table';
+        }
     };
 
     window.deleteChannel = function(index) {
@@ -438,50 +635,399 @@
         updateStats();
         populateCategories();
         filterAndRender();
+        if (textEditorPanel.classList.contains('active')) {
+            m3uTextEditor.value = buildM3UContent();
+            textSaveStatus.innerText = 'Text updated from table';
+        }
     };
 
+    function duplicateStreamKey(url) {
+        const cleanUrl = String(url || '').trim();
+        const pathOnly = cleanUrl.split(/[?#]/)[0].toLowerCase();
+        if (!/\.(mpd|m3u8|ts)$/.test(pathOnly)) return '';
+        return cleanUrl.toLowerCase();
+    }
+
+    deleteDuplicatesBtn.addEventListener('click', () => {
+        const seen = new Set();
+        let removedCount = 0;
+
+        playlistChannels = playlistChannels.filter(ch => {
+            const key = duplicateStreamKey(ch.url);
+            if (!key) return true;
+            if (seen.has(key)) {
+                removedCount++;
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+
+        originalOrder = [...playlistChannels];
+        updateStats();
+        populateCategories();
+        filterAndRender();
+        if (textEditorPanel.classList.contains('active')) {
+            m3uTextEditor.value = buildM3UContent();
+            textSaveStatus.innerText = 'Duplicates removed from table';
+        }
+        alert(`Removed ${removedCount} duplicate stream URL${removedCount === 1 ? '' : 's'}. Channel names were ignored.`);
+    });
+
+    deleteOfflineBtn.addEventListener('click', () => {
+        const beforeCount = playlistChannels.length;
+        playlistChannels = playlistChannels.filter(ch => ch.status !== 'offline');
+        const removedCount = beforeCount - playlistChannels.length;
+
+        originalOrder = [...playlistChannels];
+        updateStats();
+        populateCategories();
+        filterAndRender();
+        if (textEditorPanel.classList.contains('active')) {
+            m3uTextEditor.value = buildM3UContent();
+            textSaveStatus.innerText = 'Offline channels removed from table';
+        }
+        alert(`Removed ${removedCount} offline channel${removedCount === 1 ? '' : 's'}.`);
+    });
+
+    deleteGeoblockedBtn.addEventListener('click', () => {
+        const beforeCount = playlistChannels.length;
+        playlistChannels = playlistChannels.filter(ch => ch.status !== 'geoblocked');
+        const removedCount = beforeCount - playlistChannels.length;
+
+        originalOrder = [...playlistChannels];
+        updateStats();
+        populateCategories();
+        filterAndRender();
+        if (textEditorPanel.classList.contains('active')) {
+            m3uTextEditor.value = buildM3UContent();
+            textSaveStatus.innerText = 'Geoblocked channels removed from table';
+        }
+        alert(`Removed ${removedCount} geoblocked channel${removedCount === 1 ? '' : 's'}.`);
+    });
+
     // 6. Network Stream Validator
-    async function checkStreamUrl(url) {
-        const cleanUrl = url.trim();
-        if (!cleanUrl) return false;
+    function streamExtension(url) {
+        const pathOnly = String(url || '').trim().split(/[?#]/)[0].toLowerCase();
+        const match = pathOnly.match(/\.([a-z0-9]+)$/);
+        return match ? match[1] : '';
+    }
 
-        const attempts = [
-            () => fetch(cleanUrl, { method: 'GET', mode: 'no-cors', cache: 'no-store' }),
-            () => fetch(`https://corsproxy.io/?url=${encodeURIComponent(cleanUrl)}`, { method: 'GET', cache: 'no-store' })
+    function statusLabel(status) {
+        if (status === 'geoblocked') return 'GEOBLOCK';
+        return String(status || 'unchecked').toUpperCase();
+    }
+
+    function looksLikeGeoBlockedPage(text) {
+        const sample = String(text || '').slice(0, 5000).toLowerCase();
+        return sample.includes('geo-block') ||
+            sample.includes('geoblock') ||
+            sample.includes('geo restricted') ||
+            sample.includes('geo-restricted') ||
+            sample.includes('geo restriction') ||
+            sample.includes('geographical restriction') ||
+            sample.includes('not available in your country') ||
+            sample.includes('not available in this country') ||
+            sample.includes('not available in your region') ||
+            sample.includes('not available in this region') ||
+            sample.includes('not available in your location') ||
+            sample.includes('outside of your territory') ||
+            sample.includes('outside your territory') ||
+            sample.includes('country is not allowed') ||
+            sample.includes('region is not allowed') ||
+            sample.includes('blocked in your country') ||
+            sample.includes('blocked in your region') ||
+            sample.includes('access from your country') ||
+            sample.includes('restricted in your country') ||
+            sample.includes('restricted in your region') ||
+            sample.includes('due to rights restrictions') ||
+            sample.includes('content is not available') ||
+            sample.includes('content unavailable in your area');
+    }
+
+    function responseLooksGeoblocked(response, bodyText) {
+        if (!response || response.type === 'opaque') return false;
+        if (response.status === 451) return true;
+        if (response.status === 403) return true;
+        if (response.status === 401 && looksLikeGeoBlockedPage(bodyText)) return true;
+        return looksLikeGeoBlockedPage(bodyText);
+    }
+
+    function looksLikeBlockedPage(text) {
+        const sample = String(text || '').slice(0, 4000).toLowerCase();
+        return sample.includes('<html') ||
+            sample.includes('<!doctype') ||
+            sample.includes('access denied') ||
+            sample.includes('forbidden') ||
+            sample.includes('not available') ||
+            sample.includes('unavailable') ||
+            sample.includes('geo') ||
+            sample.includes('blocked') ||
+            sample.includes('not authorized') ||
+            sample.includes('token expired');
+    }
+
+    function streamCheckUrls(url) {
+        return [
+            url,
+            `https://corsproxy.io/?${encodeURIComponent(url)}`,
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
         ];
+    }
 
-        for (const attempt of attempts) {
-            try {
-                const response = await attempt();
-                if (response.type === 'opaque' || response.ok) return true;
-            } catch (err) {
-                // Try the next strategy. Some streams block browser CORS but still load directly.
+    function resolveStreamUrl(baseUrl, maybeRelativeUrl) {
+        try {
+            return new URL(String(maybeRelativeUrl || '').trim(), baseUrl).href;
+        } catch (err) {
+            return '';
+        }
+    }
+
+    function hlsUriFromTag(line) {
+        const match = String(line || '').match(/URI=(?:"([^"]+)"|([^,\s]+))/i);
+        return match ? (match[1] || match[2] || '').trim() : '';
+    }
+
+    function firstHlsUrls(manifestText, manifestUrl) {
+        const lines = String(manifestText || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+        const urls = [];
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (/^#EXT-X-(STREAM-INF|I-FRAME-STREAM-INF):/i.test(line)) {
+                const inlineUri = hlsUriFromTag(line);
+                if (inlineUri) urls.push(resolveStreamUrl(manifestUrl, inlineUri));
+                for (let j = i + 1; j < lines.length; j++) {
+                    if (!lines[j].startsWith('#')) {
+                        urls.push(resolveStreamUrl(manifestUrl, lines[j]));
+                        break;
+                    }
+                }
             }
         }
 
-        return false;
+        lines.forEach(line => {
+            if (!line.startsWith('#') && !line.toLowerCase().startsWith('data:')) {
+                urls.push(resolveStreamUrl(manifestUrl, line));
+            }
+        });
+
+        return [...new Set(urls.filter(Boolean))].slice(0, 3);
+    }
+
+    function hlsTagUrls(manifestText, manifestUrl, tagName) {
+        return String(manifestText || '')
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => line.toUpperCase().startsWith(`#EXT-X-${tagName}:`))
+            .map(hlsUriFromTag)
+            .filter(uri => uri && !uri.toLowerCase().startsWith('data:'))
+            .map(uri => resolveStreamUrl(manifestUrl, uri))
+            .filter(Boolean);
+    }
+
+    async function fetchStreamText(url, timeoutMs = 9000) {
+        let sawGeoBlock = false;
+        for (const checkUrl of streamCheckUrls(url)) {
+            try {
+                const response = await fetchWithTimeout(checkUrl, { method: 'GET' }, timeoutMs);
+                const bodyText = await response.text();
+                if (responseLooksGeoblocked(response, bodyText)) sawGeoBlock = true;
+                if (response.ok && response.type !== 'opaque' && !looksLikeBlockedPage(bodyText)) {
+                    return { status: 'online', response, bodyText };
+                }
+            } catch (err) {
+                // Try the next strategy.
+            }
+        }
+        return { status: sawGeoBlock ? 'geoblocked' : 'offline', response: null, bodyText: '' };
+    }
+
+    async function checkMediaSegmentUrl(url) {
+        let sawGeoBlock = false;
+        for (const checkUrl of streamCheckUrls(url)) {
+            try {
+                const response = await fetchWithTimeout(checkUrl, {
+                    method: 'GET',
+                    headers: { Range: 'bytes=0-4095' }
+                }, 9000);
+                const contentType = (response.headers.get('content-type') || '').toLowerCase();
+                const bodyText = await response.text();
+                if (responseLooksGeoblocked(response, bodyText)) sawGeoBlock = true;
+                if (!response.ok || response.type === 'opaque' || looksLikeBlockedPage(bodyText)) continue;
+                if (contentType.includes('text/html') || contentType.includes('application/json') || contentType.includes('text/plain')) continue;
+                if (contentType.includes('video') || contentType.includes('audio') || contentType.includes('octet-stream') || contentType.includes('mp4') || contentType.includes('mpeg') || bodyText.length > 1000) {
+                    return 'online';
+                }
+            } catch (err) {
+                // Try the next strategy.
+            }
+        }
+        return sawGeoBlock ? 'geoblocked' : 'offline';
+    }
+
+    async function validateHlsPlayback(manifestUrl, manifestText, depth = 0) {
+        const text = String(manifestText || '').trim();
+        if (!text.includes('#EXTM3U') || !/#EXT-X-(STREAM-INF|TARGETDURATION|MEDIA-SEQUENCE|INF|MEDIA|MAP):/i.test(text) || looksLikeBlockedPage(text)) {
+            return 'offline';
+        }
+        if (depth > 2) return 'offline';
+
+        const requiredSideUrls = [
+            ...hlsTagUrls(text, manifestUrl, 'KEY'),
+            ...hlsTagUrls(text, manifestUrl, 'MAP')
+        ];
+        for (const sideUrl of [...new Set(requiredSideUrls)]) {
+            const sideStatus = await checkMediaSegmentUrl(sideUrl);
+            if (sideStatus !== 'online') return sideStatus;
+        }
+
+        const urls = firstHlsUrls(text, manifestUrl);
+        if (!urls.length) return 'offline';
+
+        for (const nextUrl of urls) {
+            if (streamExtension(nextUrl) === 'm3u8' || /#EXT-X-STREAM-INF:/i.test(text)) {
+                const nextManifest = await fetchStreamText(nextUrl);
+                if (nextManifest.status !== 'online') return nextManifest.status;
+                const nestedStatus = await validateHlsPlayback(nextUrl, nextManifest.bodyText, depth + 1);
+                if (nestedStatus === 'online') return 'online';
+                if (nestedStatus === 'geoblocked') return 'geoblocked';
+                continue;
+            }
+
+            const segmentStatus = await checkMediaSegmentUrl(nextUrl);
+            if (segmentStatus === 'online') return 'online';
+            if (segmentStatus === 'geoblocked') return 'geoblocked';
+        }
+
+        return 'offline';
+    }
+
+    function isValidStreamResponse(url, response, bodyText) {
+        if (!response.ok || response.type === 'opaque') return false;
+
+        const ext = streamExtension(url);
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        const text = String(bodyText || '').trim();
+        if (looksLikeBlockedPage(text)) return false;
+
+        if (ext === 'm3u8') {
+            return text.includes('#EXTM3U') &&
+                /#EXT-X-(STREAM-INF|TARGETDURATION|MEDIA-SEQUENCE|INF|MEDIA):/i.test(text);
+        }
+
+        if (ext === 'mpd') {
+            return /<MPD[\s>]/i.test(text) &&
+                /<(Period|AdaptationSet|Representation|BaseURL|SegmentTemplate)[\s>]/i.test(text);
+        }
+
+        if (ext === 'ts') {
+            return !contentType.includes('text/html') &&
+                !contentType.includes('application/json') &&
+                !contentType.includes('text/plain') &&
+                (contentType.includes('video') || contentType.includes('octet-stream') || bodyText.length > 1000);
+        }
+
+        return contentType.includes('video') || contentType.includes('mpegurl') || contentType.includes('dash+xml');
+    }
+
+    async function fetchWithTimeout(url, options = {}, timeoutMs = 9000) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            return await fetch(url, { ...options, signal: controller.signal, cache: 'no-store' });
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
+    async function checkStreamUrl(url) {
+        const cleanUrl = url.trim();
+        if (!cleanUrl) return 'offline';
+        let sawGeoBlock = false;
+
+        for (const checkUrl of streamCheckUrls(cleanUrl)) {
+            try {
+                const response = await fetchWithTimeout(checkUrl, {
+                    method: 'GET',
+                    headers: streamExtension(cleanUrl) === 'ts' ? { Range: 'bytes=0-4095' } : {}
+                });
+                const bodyText = await response.text();
+                if (responseLooksGeoblocked(response, bodyText)) sawGeoBlock = true;
+                if (streamExtension(cleanUrl) === 'm3u8') {
+                    const hlsStatus = await validateHlsPlayback(cleanUrl, bodyText);
+                    if (hlsStatus === 'online') return 'online';
+                    if (hlsStatus === 'geoblocked') sawGeoBlock = true;
+                    continue;
+                }
+                if (isValidStreamResponse(cleanUrl, response, bodyText)) return 'online';
+            } catch (err) {
+                // Try the next strategy. A strict check should fail closed.
+            }
+        }
+
+        return sawGeoBlock ? 'geoblocked' : 'offline';
+    }
+
+    function updateCheckProgress(completed, total) {
+        const percent = total ? Math.round((completed / total) * 100) : 0;
+        checkProgressPanel.classList.add('active');
+        checkProgressText.innerText = `Checking channels ${completed}/${total}`;
+        checkProgressPercent.innerText = `${percent}%`;
+        checkProgressFill.style.width = `${percent}%`;
     }
 
     checkBtn.addEventListener('click', async () => {
+        if (!playlistChannels.length) return;
         checkBtn.disabled = true;
         checkBtn.innerText = '⏳ Checking...';
+        const channelsToCheck = [...playlistChannels];
+        const totalChannels = channelsToCheck.length;
+        updateCheckProgress(0, totalChannels);
 
-        for (let i = 0; i < playlistChannels.length; i++) {
-            const badge = document.getElementById(`status-${i}`);
+        const concurrency = 12;
+        let nextIndex = 0;
+        let completed = 0;
+
+        async function checkOneChannel(index) {
+            const channel = channelsToCheck[index];
+            const currentIndex = playlistChannels.indexOf(channel);
+            const badge = currentIndex !== -1 ? document.getElementById(`status-${currentIndex}`) : null;
             if (badge) badge.innerText = 'TRYING';
             try {
-                const isOnline = await checkStreamUrl(playlistChannels[i].url);
-                playlistChannels[i].status = isOnline ? 'online' : 'offline';
+                channel.status = await checkStreamUrl(channel.url);
             } catch (err) {
-                playlistChannels[i].status = 'offline';
+                channel.status = 'offline';
             }
             if (badge) {
-                badge.className = `status-badge status-${playlistChannels[i].status}`;
-                badge.innerText = playlistChannels[i].status.toUpperCase();
+                badge.className = `status-badge status-${channel.status}`;
+                badge.innerText = statusLabel(channel.status);
             }
+            updateStats();
+            completed++;
+            checkBtn.innerText = `⏳ Checking ${completed}/${totalChannels}`;
+            updateCheckProgress(completed, totalChannels);
+        }
+
+        async function worker() {
+            while (nextIndex < totalChannels) {
+                const index = nextIndex++;
+                await checkOneChannel(index);
+            }
+        }
+
+        const workerCount = Math.min(concurrency, totalChannels);
+        await Promise.all(Array.from({ length: workerCount }, worker));
+
+        filterAndRender();
+        if (textEditorPanel.classList.contains('active')) {
+            m3uTextEditor.value = buildM3UContent();
+            textSaveStatus.innerText = 'Statuses updated from check';
         }
         checkBtn.disabled = false;
         checkBtn.innerText = '⚡ Check Status';
+        updateCheckProgress(totalChannels, totalChannels);
+        setTimeout(() => checkProgressPanel.classList.remove('active'), 1200);
     });
 
     // 7. Sort Engines
@@ -512,10 +1058,11 @@
                 'solarflix', 'solar sports', 'shop tv',
                 'net 25', 'aliw', 'aliw channel', 'dwiz', 'dwiz news tv', 'eagle broadcasting',
                 'inc tv', 'untv', 'truth channel', 'light tv', 'hope channel philippines', 'tv maria',
-                'rj digitv', 'timeless tv', 'rock mnl', 'smni',
+                'rj digitv', 'rjtv29', 'rj tv 29', 'timeless tv', 'rock mnl', 'rock tv of manila', 'smni',
                 'anc', 'teleradyo', 'tele radyo', 'dzbb', 'dzrh', 'dzmm', 'cnn philippines',
                 'buko', 'cinemo', 'cinema one', 'pbo', 'pinoy box office', 'viva cinema', 'viva tv', 'sari sari', 'sari-sari', 'jeepney tv',
-                'myx philippines', 'pba', 'uaap'
+                'myx philippines', 'myx global', 'radio maria', 'ptv4', 'ptv 4', 'oras ng himala', 'mindanow network',
+                'metro channel', 'gnn', 'filam tv', 'cltv36', 'cltv 36', 'pba', 'uaap'
             ]
         },
         { group: 'Movies', terms: ['movie', 'movies', 'cinema', 'film', 'hbo', 'cinemax', 'fox movies', 'thrill', 'hits', 'screen'] },
@@ -526,23 +1073,68 @@
         { group: 'Kids', terms: ['kids', 'kid', 'cartoon', 'nick', 'nickelodeon', 'disney', 'boomerang', 'baby', 'junior', 'pbs kids'] }
     ];
 
-    function termMatches(text, term) {
-        const normalizedText = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
-        const normalizedTerm = term.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-        const compactText = text.toLowerCase().replace(/[^a-z0-9]+/g, '');
-        const compactTerm = term.toLowerCase().replace(/[^a-z0-9]+/g, '');
-        return normalizedTerm && (
-            normalizedText.includes(` ${normalizedTerm} `) ||
-            (compactTerm.length >= 5 && compactText.includes(compactTerm))
-        );
+    function normalizeWords(value) {
+        return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    }
+
+    function compactWords(value) {
+        return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    }
+
+    function termMatchScore(text, term, fieldWeight = 1) {
+        const normalizedText = normalizeWords(text);
+        const normalizedTerm = normalizeWords(term);
+        if (!normalizedTerm) return 0;
+
+        const paddedText = ` ${normalizedText} `;
+        const paddedTerm = ` ${normalizedTerm} `;
+        const wordCount = normalizedTerm.split(/\s+/).filter(Boolean).length;
+        const specificity = Math.min(30, normalizedTerm.length) + (wordCount * 6);
+
+        if (normalizedText === normalizedTerm) return (140 + specificity) * fieldWeight;
+        if (paddedText.includes(paddedTerm)) return (35 + specificity) * fieldWeight;
+
+        const compactText = compactWords(text);
+        const compactTerm = compactWords(term);
+        if (compactTerm.length >= 6 && compactText.includes(compactTerm)) {
+            return (18 + Math.min(18, compactTerm.length)) * fieldWeight;
+        }
+
+        return 0;
+    }
+
+    function categoryScore(channel, rule) {
+        const fields = [
+            { text: channel.name, weight: 1.35 },
+            { text: channel.group, weight: 0.85 },
+            { text: channel.epgId, weight: 0.75 },
+            { text: channel.url, weight: 0.35 },
+            { text: channel.logo, weight: 0.25 }
+        ];
+
+        let score = 0;
+        rule.terms.forEach(term => {
+            fields.forEach(field => {
+                score += termMatchScore(field.text, term, field.weight);
+            });
+        });
+
+        const existingGroup = normalizeWords(channel.group);
+        if (existingGroup === normalizeWords(rule.group)) score += 45;
+        return score;
     }
 
     function normalizeAutoCategory(channel) {
-        const haystack = `${channel.group || ''} ${channel.name || ''}`.toLowerCase();
-        const matchedRule = autoCategoryRules.find(rule => rule.terms.some(term => termMatches(haystack, term)));
-        if (matchedRule) return matchedRule.group;
+        const scoredRules = autoCategoryRules
+            .map(rule => ({ group: rule.group, score: categoryScore(channel, rule) }))
+            .sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                return autoCategoryRank(a.group) - autoCategoryRank(b.group);
+            });
 
-        const existingGroup = autoCategoryOrder.find(group => (channel.group || '').toLowerCase() === group.toLowerCase());
+        if (scoredRules[0] && scoredRules[0].score >= 45) return scoredRules[0].group;
+
+        const existingGroup = autoCategoryOrder.find(group => normalizeWords(channel.group) === normalizeWords(group));
         return existingGroup || 'Entertainment';
     }
 
@@ -593,6 +1185,10 @@
         categoryOrderSelect.value = selectedCategory;
         populateCategories();
         filterAndRender();
+        if (textEditorPanel.classList.contains('active')) {
+            m3uTextEditor.value = buildM3UContent();
+            textSaveStatus.innerText = 'Text updated from table';
+        }
     }
 
     categoryUpBtn.addEventListener('click', () => moveSelectedCategory(-1));
@@ -610,6 +1206,10 @@
         categoryFilter.value = 'all';
         populateCategories();
         filterAndRender();
+        if (textEditorPanel.classList.contains('active')) {
+            m3uTextEditor.value = buildM3UContent();
+            textSaveStatus.innerText = 'Text updated from table';
+        }
     });
 
     // 8. Auto Category Sorting Filters
@@ -626,23 +1226,90 @@
     }
 
     categoryFilter.addEventListener('change', filterAndRender);
+    channelSearchInput.addEventListener('input', filterAndRender);
 
     function filterAndRender() {
         const selectedCat = categoryFilter.value;
-        if (selectedCat === 'all') {
-            renderTable(playlistChannels);
-        } else {
-            const filtered = playlistChannels.filter(ch => ch.group === selectedCat);
-            renderTable(filtered);
-        }
+        const query = channelSearchInput.value.trim().toLowerCase();
+        const filtered = playlistChannels.filter(ch => {
+            const inCategory = selectedCat === 'all' || ch.group === selectedCat;
+            if (!inCategory) return false;
+            if (!query) return true;
+            const searchableText = [
+                ch.name,
+                ch.group,
+                ch.url,
+                ch.epgId,
+                ch.logo,
+                ch.status,
+                ...(ch.props || [])
+            ].join(' ').toLowerCase();
+            return searchableText.includes(query);
+        });
+        renderTable(filtered);
     }
 
     // 9. Structured Exporter
-    exportBtn.addEventListener('click', () => {
+    function escapeM3UAttribute(value) {
+        return String(value || '').replace(/"/g, '&quot;');
+    }
+
+    function buildExtinfLine(ch) {
+        const attrs = {
+            ...(ch.attrs || {}),
+            'tvg-id': ch.epgId || '',
+            'tvg-logo': ch.logo || '',
+            'group-title': ch.group || 'Entertainment'
+        };
+        const attrOrder = [...(ch.attrOrder || [])];
+        ['tvg-id', 'tvg-logo', 'group-title'].forEach(attr => {
+            if (!attrOrder.includes(attr)) attrOrder.push(attr);
+        });
+        const attrText = attrOrder
+            .filter(attr => attrs[attr] !== undefined)
+            .map(attr => `${attr}="${escapeM3UAttribute(attrs[attr])}"`)
+            .join(' ');
+        return `#EXTINF:-1 ${attrText},${ch.name}`;
+    }
+
+    function buildM3UContent() {
         let m3uContent = "#EXTM3U\n";
         playlistChannels.forEach(ch => {
-            m3uContent += `#EXTINF:-1 tvg-id="${ch.epgId || ''}" tvg-logo="${ch.logo}" group-title="${ch.group}",${ch.name}\n${ch.url}\n`;
+            const propLines = (ch.props || []).length ? `${ch.props.join('\n')}\n` : '';
+            m3uContent += `${buildExtinfLine(ch)}\n${propLines}${ch.url}\n\n`;
         });
+        return m3uContent;
+    }
+
+    textViewBtn.addEventListener('click', () => {
+        m3uTextEditor.value = buildM3UContent();
+        textSaveStatus.innerText = 'Text matches table';
+        textEditorPanel.classList.add('active');
+    });
+
+    m3uTextEditor.addEventListener('input', () => {
+        textSaveStatus.innerText = 'Unsaved text changes';
+    });
+
+    refreshTextBtn.addEventListener('click', () => {
+        m3uTextEditor.value = buildM3UContent();
+        textSaveStatus.innerText = 'Text refreshed from table';
+    });
+
+    applyTextBtn.addEventListener('click', () => {
+        const editedText = m3uTextEditor.value.trim();
+        if (!editedText) return alert('Text editor is empty.');
+        reloadFromText(editedText);
+        m3uTextEditor.value = buildM3UContent();
+        textSaveStatus.innerText = 'Saved to table';
+    });
+
+    closeTextBtn.addEventListener('click', () => {
+        textEditorPanel.classList.remove('active');
+    });
+
+    exportBtn.addEventListener('click', () => {
+        const m3uContent = buildM3UContent();
         const blob = new Blob([m3uContent], { type: 'text/plain' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -651,13 +1318,18 @@
     });
 
     function enableControls() {
-        checkBtn.disabled = false; sortBtn.disabled = false; autoSortBtn.disabled = false;
+        checkBtn.disabled = false; sortBtn.disabled = false; autoSortBtn.disabled = false; deleteDuplicatesBtn.disabled = false; deleteOfflineBtn.disabled = false; deleteGeoblockedBtn.disabled = false;
         categoryOrderSelect.disabled = false; categoryUpBtn.disabled = false; categoryDownBtn.disabled = false;
-        categoryFilter.disabled = false; exportBtn.disabled = false;
+        categoryFilter.disabled = false; channelSearchInput.disabled = false; textViewBtn.disabled = false; refreshTextBtn.disabled = false; applyTextBtn.disabled = false; exportBtn.disabled = false;
     }
 
     function updateStats() {
-        statsDisplay.innerText = `Channels: ${playlistChannels.length}`;
+        const statusCounts = playlistChannels.reduce((counts, ch) => {
+            const status = ch.status || 'unchecked';
+            counts[status] = (counts[status] || 0) + 1;
+            return counts;
+        }, {});
+        statsDisplay.innerText = `Channels: ${playlistChannels.length} | Online: ${statusCounts.online || 0} | Offline: ${statusCounts.offline || 0} | Geoblocked: ${statusCounts.geoblocked || 0} | Unchecked: ${statusCounts.unchecked || 0}`;
     }
 
     populateCategoryOrderSelect();
