@@ -78,6 +78,19 @@
             cursor: pointer;
         }
 
+        .toggle-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            color: #cbd5e1;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .toggle-label input {
+            margin: 0;
+        }
+
         .stats {
             margin-left: auto;
             font-weight: bold;
@@ -469,7 +482,7 @@
 
     function loadData(textData) {
         parseM3U(textData);
-        normalizePlaylistGroups();
+        originalOrder = [...playlistChannels];
         enableControls();
         populateCategoryOrderSelect();
         populateCategories();
@@ -479,16 +492,16 @@
     function mergeData(textData) {
         const beforeCount = playlistChannels.length;
         parseM3U(textData, true);
-        normalizePlaylistGroups();
+        originalOrder = [...playlistChannels];
         enableControls();
         populateCategoryOrderSelect();
         populateCategories();
         filterAndRender();
         if (textEditorPanel.classList.contains('active')) {
             m3uTextEditor.value = buildM3UContent();
-            textSaveStatus.innerText = 'Merged playlist into table';
+            textSaveStatus.innerText = 'Merged playlist with original groups';
         }
-        alert(`Merged ${playlistChannels.length - beforeCount} channel${playlistChannels.length - beforeCount === 1 ? '' : 's'}.`);
+        alert(`Merged ${playlistChannels.length - beforeCount} channel${playlistChannels.length - beforeCount === 1 ? '' : 's'} and kept original group names.`);
     }
 
     function reloadFromText(textData) {
@@ -578,8 +591,18 @@
             .replace(/>/g, '&gt;');
     }
 
+    function customPlaylistGroups() {
+        return [...new Set(playlistChannels
+            .map(ch => String(ch.group || '').trim())
+            .filter(group => group && !autoCategoryOrder.includes(group)))]
+            .sort((a, b) => a.localeCompare(b));
+    }
+
     function getGroupOptions(currentGroup) {
-        return [...autoCategoryOrder];
+        const groups = [...autoCategoryOrder, ...customPlaylistGroups()];
+        const cleanCurrentGroup = String(currentGroup || '').trim();
+        if (cleanCurrentGroup && !groups.includes(cleanCurrentGroup)) groups.push(cleanCurrentGroup);
+        return groups;
     }
 
     // 4. Render Layout
@@ -614,9 +637,10 @@
 
     // 5. Modifications Management
     window.updateField = function(index, field, value) {
-        playlistChannels[index][field] = field === 'group' && !autoCategoryOrder.includes(value)
+        const cleanValue = value.trim();
+        playlistChannels[index][field] = field === 'group' && !getGroupOptions(playlistChannels[index]?.group).includes(cleanValue)
             ? 'Entertainment'
-            : value.trim();
+            : cleanValue;
         if (field === 'group') {
             sortByCategoryOrder();
             isSorted = false;
@@ -648,18 +672,30 @@
         return cleanUrl.toLowerCase();
     }
 
+    function hasEpgId(channel) {
+        return Boolean(String(channel?.epgId || channel?.attrs?.['tvg-id'] || '').trim());
+    }
+
     deleteDuplicatesBtn.addEventListener('click', () => {
-        const seen = new Set();
+        const keeperByKey = new Map();
         let removedCount = 0;
+
+        playlistChannels.forEach(ch => {
+            const key = duplicateStreamKey(ch.url);
+            if (!key) return;
+            const currentKeeper = keeperByKey.get(key);
+            if (!currentKeeper || (!hasEpgId(currentKeeper) && hasEpgId(ch))) {
+                keeperByKey.set(key, ch);
+            }
+        });
 
         playlistChannels = playlistChannels.filter(ch => {
             const key = duplicateStreamKey(ch.url);
             if (!key) return true;
-            if (seen.has(key)) {
+            if (keeperByKey.get(key) !== ch) {
                 removedCount++;
                 return false;
             }
-            seen.add(key);
             return true;
         });
 
@@ -671,7 +707,7 @@
             m3uTextEditor.value = buildM3UContent();
             textSaveStatus.innerText = 'Duplicates removed from table';
         }
-        alert(`Removed ${removedCount} duplicate stream URL${removedCount === 1 ? '' : 's'}. Channel names were ignored.`);
+        alert(`Removed ${removedCount} duplicate stream URL${removedCount === 1 ? '' : 's'}. Kept duplicates with tvg-id when available.`);
     });
 
     deleteOfflineBtn.addEventListener('click', () => {
@@ -1215,7 +1251,7 @@
     // 8. Auto Category Sorting Filters
     function populateCategories() {
         const currentSelection = categoryFilter.value;
-        const categories = [...autoCategoryOrder];
+        const categories = getGroupOptions();
         categoryFilter.innerHTML = '<option value="all">All Categories</option>';
         categories.forEach(cat => {
             const opt = document.createElement('option');
