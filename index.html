@@ -499,6 +499,7 @@
     let playlistChannels = [];
     let originalOrder = [];
     const expandedCategories = new Set();
+    let loadedPlaylistFileName = 'clean_playlist.m3u';
 
     // Elements
     const fileInput = document.getElementById('fileInput');
@@ -615,6 +616,7 @@
     fileInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (!file) return;
+        loadedPlaylistFileName = file.name || loadedPlaylistFileName;
         const reader = new FileReader();
         reader.onload = (evt) => loadData(evt.target.result);
         reader.readAsText(file);
@@ -674,6 +676,9 @@
         
         try {
             const data = await fetchPlaylistText(url);
+            const urlPath = new URL(normalizePlaylistUrl(url), location.href).pathname;
+            const fileName = decodeURIComponent(urlPath.split('/').pop() || '').trim();
+            if (/\.(m3u|m3u8)$/i.test(fileName)) loadedPlaylistFileName = fileName;
             loadData(data);
         } catch (err) {
             alert(`Failed fetching M3U: ${err.message}`);
@@ -2417,13 +2422,59 @@
         textEditorPanel.classList.remove('active');
     });
 
-    exportBtn.addEventListener('click', () => {
-        const m3uContent = buildM3UContent();
+    function safePlaylistFileName(name) {
+        const clean = String(name || '').trim().replace(/[\\/:*?"<>|]+/g, '_');
+        if (/\.(m3u|m3u8)$/i.test(clean)) return clean;
+        return `${clean || 'clean_playlist'}.m3u`;
+    }
+
+    function downloadM3UContent(m3uContent) {
         const blob = new Blob([m3uContent], { type: 'text/plain' });
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'clean_playlist.m3u';
+        const objectUrl = URL.createObjectURL(blob);
+        a.href = objectUrl;
+        a.download = safePlaylistFileName(loadedPlaylistFileName);
         a.click();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    }
+
+    async function saveM3UContent(m3uContent) {
+        if (!window.showSaveFilePicker) {
+            downloadM3UContent(m3uContent);
+            alert('Your browser used download mode. Use Chrome or Edge on HTTPS to pick and overwrite a file directly.');
+            return;
+        }
+
+        const handle = await window.showSaveFilePicker({
+            suggestedName: safePlaylistFileName(loadedPlaylistFileName),
+            types: [{
+                description: 'M3U Playlist',
+                accept: { 'audio/x-mpegurl': ['.m3u', '.m3u8'], 'text/plain': ['.m3u', '.m3u8'] }
+            }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(m3uContent);
+        await writable.close();
+        loadedPlaylistFileName = handle.name || loadedPlaylistFileName;
+    }
+
+    exportBtn.addEventListener('click', async () => {
+        const m3uContent = buildM3UContent();
+        exportBtn.disabled = true;
+        const previousText = exportBtn.innerText;
+        exportBtn.innerText = '💾 Saving...';
+        try {
+            await saveM3UContent(m3uContent);
+            exportBtn.innerText = '✅ Saved';
+            setTimeout(() => { exportBtn.innerText = previousText; }, 1400);
+        } catch (err) {
+            if (err && err.name !== 'AbortError') {
+                alert(`Export failed: ${err.message || err}`);
+            }
+            exportBtn.innerText = previousText;
+        } finally {
+            exportBtn.disabled = false;
+        }
     });
 
     function enableControls() {
