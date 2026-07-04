@@ -1316,13 +1316,13 @@
             if ((ext === 'mpd' || ext === 'm3u8') && window.shaka) {
                 const rawKey = getLicenseKey(channel);
                 const keyVariants = clearKeyConfigVariantsFromValue(rawKey);
-                if (rawKey && !keyVariants.length) {
-                    throw new Error('ClearKey must be keyid:key hex, or JSON with keys containing kid and k.');
-                }
-                if (rawKey) {
+                if (keyVariants.length) {
                     await ensureClearKeyCanStart();
                 }
-                const variantsToTry = keyVariants.length ? keyVariants : [{ label: '', config: null }];
+                const variantsToTry = [
+                    { label: 'no key', config: null },
+                    ...keyVariants
+                ];
                 let lastPlayError = null;
 
                 for (let attempt = 0; attempt < variantsToTry.length; attempt++) {
