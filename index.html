@@ -708,7 +708,6 @@
 
     function loadData(textData) {
         parseM3U(textData);
-        sortDefaultCategoryAndChannel();
         originalOrder = [...playlistChannels];
         expandedCategories.clear();
         enableControls();
@@ -720,7 +719,6 @@
     function mergeData(textData) {
         const beforeCount = playlistChannels.length;
         parseM3U(textData, true);
-        sortDefaultCategoryAndChannel();
         originalOrder = [...playlistChannels];
         expandedCategories.clear();
         enableControls();
@@ -967,9 +965,7 @@
         });
 
         [...groups.entries()]
-            .sort(([groupA], [groupB]) => compareCategoryNames(groupA, groupB))
             .forEach(([group, groupChannels]) => {
-                groupChannels.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
                 const expanded = expandedCategories.has(group);
                 const categoryRow = document.createElement('tr');
                 categoryRow.className = 'category-row';
