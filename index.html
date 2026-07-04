@@ -130,6 +130,49 @@
 
         tr:hover { background-color: #1c1c22; }
 
+        .category-row {
+            background: #181820;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .category-row:hover {
+            background: #222232;
+        }
+
+        .category-cell {
+            padding: 8px 10px;
+        }
+
+        .category-line {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .category-name {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 800;
+            color: #f8fafc;
+        }
+
+        .category-summary {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 6px;
+            color: #94a3b8;
+            font-size: 11px;
+        }
+
+        .channel-row.collapsed-hidden {
+            display: none;
+        }
+
         .channel-logo {
             width: 20px;
             height: 20px;
@@ -183,6 +226,12 @@
             width: 260px;
             cursor: text;
             font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+
+        .checker-api-input {
+            min-width: 300px;
+            flex: 1 1 300px;
+            cursor: text;
         }
 
         .status-badge {
@@ -369,6 +418,7 @@
 
         <button id="addChannelBtn">➕ Add Channel</button>
         <button id="checkBtn" disabled>⚡ Check Status</button>
+        <input class="checker-api-input" type="text" id="checkerApiInput" placeholder="Checker API URL (optional)">
         <button id="sortBtn" disabled>🔀 Sort A-Z</button>
         <button id="autoSortBtn" disabled>🧭 Auto Sort Groups</button>
         <button id="autoIconsBtn" disabled>🖼️ Auto Grab Icons</button>
@@ -448,6 +498,7 @@
 <script>
     let playlistChannels = [];
     let originalOrder = [];
+    const expandedCategories = new Set();
 
     // Elements
     const fileInput = document.getElementById('fileInput');
@@ -456,6 +507,7 @@
     const fetchUrlBtn = document.getElementById('fetchUrlBtn');
     const mergeUrlBtn = document.getElementById('mergeUrlBtn');
     const checkBtn = document.getElementById('checkBtn');
+    const checkerApiInput = document.getElementById('checkerApiInput');
     const addChannelBtn = document.getElementById('addChannelBtn');
     const sortBtn = document.getElementById('sortBtn');
     const autoSortBtn = document.getElementById('autoSortBtn');
@@ -492,6 +544,21 @@
     let previewPlayer = null;
     let previewDrag = null;
     let activePreviewChannel = null;
+
+    function defaultCheckerApiUrl() {
+        if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+            return 'http://127.0.0.1:8000/api/check-streams';
+        }
+        if (location.hostname === 'strong8kdl.xyz') {
+            return `${location.origin}/api/check-streams`;
+        }
+        return 'https://strong8kdl.xyz/api/check-streams';
+    }
+
+    checkerApiInput.value = localStorage.getItem('checkerApiUrl') || defaultCheckerApiUrl();
+    checkerApiInput.addEventListener('change', () => {
+        localStorage.setItem('checkerApiUrl', checkerApiInput.value.trim());
+    });
 
     function clamp(value, min, max) {
         return Math.min(Math.max(value, min), max);
@@ -636,7 +703,9 @@
 
     function loadData(textData) {
         parseM3U(textData);
+        sortDefaultCategoryAndChannel();
         originalOrder = [...playlistChannels];
+        expandedCategories.clear();
         enableControls();
         populateCategoryOrderSelect();
         populateCategories();
@@ -646,7 +715,9 @@
     function mergeData(textData) {
         const beforeCount = playlistChannels.length;
         parseM3U(textData, true);
+        sortDefaultCategoryAndChannel();
         originalOrder = [...playlistChannels];
+        expandedCategories.clear();
         enableControls();
         populateCategoryOrderSelect();
         populateCategories();
@@ -802,34 +873,127 @@
     }
 
     // 4. Render Layout
+    function categoryKey(group) {
+        return String(group || 'Uncategorized').trim() || 'Uncategorized';
+    }
+
+    function categoryDisplayName(group) {
+        return categoryKey(group);
+    }
+
+    function categoryRankValue(group) {
+        const cleanGroup = categoryKey(group);
+        const autoRank = autoCategoryOrder.indexOf(cleanGroup);
+        return autoRank === -1 ? 1000 : autoRank;
+    }
+
+    function compareCategoryNames(a, b) {
+        const rankDiff = categoryRankValue(a) - categoryRankValue(b);
+        if (rankDiff !== 0) return rankDiff;
+        return categoryDisplayName(a).localeCompare(categoryDisplayName(b));
+    }
+
+    function sortDefaultCategoryAndChannel() {
+        playlistChannels.sort((a, b) => {
+            const categoryDiff = compareCategoryNames(a.group, b.group);
+            if (categoryDiff !== 0) return categoryDiff;
+            return String(a.name || '').localeCompare(String(b.name || ''));
+        });
+    }
+
+    function channelStatusSummary(channels) {
+        const counts = channels.reduce((summary, ch) => {
+            const status = ch.status || 'unchecked';
+            summary[status] = (summary[status] || 0) + 1;
+            return summary;
+        }, {});
+        return [
+            `${channels.length} channel${channels.length === 1 ? '' : 's'}`,
+            `${counts.online || 0} online`,
+            `${counts.offline || 0} offline`,
+            `${counts.geoblocked || 0} geoblocked`,
+            `${counts.unchecked || 0} unchecked`
+        ];
+    }
+
+    function statusTooltip(channel) {
+        const parts = [];
+        if (channel.latencyMs) parts.push(`${channel.latencyMs} ms`);
+        if (channel.errorDetails) parts.push(channel.errorDetails);
+        return parts.join(' | ');
+    }
+
+    function createChannelRow(ch, displayIndex) {
+        const channelIndex = playlistChannels.indexOf(ch);
+        const groupOptions = getGroupOptions(ch.group);
+        const statusTitle = statusTooltip(ch);
+        const tr = document.createElement('tr');
+        tr.className = 'channel-row';
+        tr.innerHTML = `
+            <td style="color: #64748b;">${displayIndex + 1}</td>
+            <td>
+                <div class="logo-editor">
+                    <img class="channel-logo" src="${escapeHtml(ch.logo || '')}" onerror="this.style.display='none'">
+                    <input class="logo-input" type="text" value="${escapeHtml(ch.logo || '')}" oninput="this.previousElementSibling.src = this.value; this.previousElementSibling.style.display = this.value ? '' : 'none';" onblur="updateField(${channelIndex}, 'logo', this.value)">
+                </div>
+            </td>
+            <td><div class="editable" contenteditable="true" onblur="updateField(${channelIndex}, 'name', this.innerText)">${ch.name}</div></td>
+            <td>
+                <select class="group-select" onchange="updateField(${channelIndex}, 'group', this.value)">
+                    ${groupOptions.map(group => `<option value="${escapeHtml(group)}" ${group === ch.group ? 'selected' : ''}>${escapeHtml(group)}</option>`).join('')}
+                </select>
+            </td>
+            <td><input class="epg-input" type="text" value="${escapeHtml(ch.epgId || '')}" onblur="updateField(${channelIndex}, 'epgId', this.value)"></td>
+            <td><input class="key-input" type="text" value="${escapeHtml(getLicenseKey(ch))}" onblur="updateField(${channelIndex}, 'licenseKey', this.value)"></td>
+            <td><div class="editable" contenteditable="true" onblur="updateField(${channelIndex}, 'url', this.innerText)">${ch.url}</div></td>
+            <td><span class="status-badge status-${ch.status}" id="status-${channelIndex}" title="${escapeHtml(statusTitle)}">${statusLabel(ch.status)}</span></td>
+            <td><button onclick="playChannel(${channelIndex})">▶</button> <button class="btn-danger" onclick="deleteChannel(${channelIndex})">🗑️</button></td>
+        `;
+        return tr;
+    }
+
     function renderTable(channels) {
         tableBody.innerHTML = '';
-        channels.forEach((ch, idx) => {
-            const channelIndex = playlistChannels.indexOf(ch);
-            const groupOptions = getGroupOptions(ch.group);
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td style="color: #64748b;">${idx + 1}</td>
-                <td>
-                    <div class="logo-editor">
-                        <img class="channel-logo" src="${escapeHtml(ch.logo || '')}" onerror="this.style.display='none'">
-                        <input class="logo-input" type="text" value="${escapeHtml(ch.logo || '')}" oninput="this.previousElementSibling.src = this.value; this.previousElementSibling.style.display = this.value ? '' : 'none';" onblur="updateField(${channelIndex}, 'logo', this.value)">
-                    </div>
-                </td>
-                <td><div class="editable" contenteditable="true" onblur="updateField(${channelIndex}, 'name', this.innerText)">${ch.name}</div></td>
-                <td>
-                    <select class="group-select" onchange="updateField(${channelIndex}, 'group', this.value)">
-                        ${groupOptions.map(group => `<option value="${escapeHtml(group)}" ${group === ch.group ? 'selected' : ''}>${escapeHtml(group)}</option>`).join('')}
-                    </select>
-                </td>
-                <td><input class="epg-input" type="text" value="${escapeHtml(ch.epgId || '')}" onblur="updateField(${channelIndex}, 'epgId', this.value)"></td>
-                <td><input class="key-input" type="text" value="${escapeHtml(getLicenseKey(ch))}" onblur="updateField(${channelIndex}, 'licenseKey', this.value)"></td>
-                <td><div class="editable" contenteditable="true" onblur="updateField(${channelIndex}, 'url', this.innerText)">${ch.url}</div></td>
-                <td><span class="status-badge status-${ch.status}" id="status-${channelIndex}">${statusLabel(ch.status)}</span></td>
-                <td><button onclick="playChannel(${channelIndex})">▶</button> <button class="btn-danger" onclick="deleteChannel(${channelIndex})">🗑️</button></td>
-            `;
-            tableBody.appendChild(tr);
+        const groups = new Map();
+        channels.forEach(ch => {
+            const group = categoryKey(ch.group);
+            if (!groups.has(group)) groups.set(group, []);
+            groups.get(group).push(ch);
         });
+
+        [...groups.entries()]
+            .sort(([groupA], [groupB]) => compareCategoryNames(groupA, groupB))
+            .forEach(([group, groupChannels]) => {
+                groupChannels.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+                const expanded = expandedCategories.has(group);
+                const categoryRow = document.createElement('tr');
+                categoryRow.className = 'category-row';
+                categoryRow.innerHTML = `
+                    <td class="category-cell" colspan="9">
+                        <div class="category-line">
+                            <span class="category-name">${expanded ? '▾' : '▸'} ${escapeHtml(categoryDisplayName(group))}</span>
+                            <span class="category-summary">
+                                ${channelStatusSummary(groupChannels).map(item => `<span>${escapeHtml(item)}</span>`).join('')}
+                            </span>
+                        </div>
+                    </td>
+                `;
+                categoryRow.addEventListener('click', () => {
+                    if (expandedCategories.has(group)) {
+                        expandedCategories.delete(group);
+                    } else {
+                        expandedCategories.add(group);
+                    }
+                    filterAndRender();
+                });
+                tableBody.appendChild(categoryRow);
+
+                if (expanded) {
+                    groupChannels.forEach((ch, idx) => {
+                        tableBody.appendChild(createChannelRow(ch, idx));
+                    });
+                }
+            });
     }
 
     function base64ToHex(value) {
@@ -1545,6 +1709,27 @@
         return String(status || 'unchecked').toUpperCase();
     }
 
+    function normalizeCheckStatus(status) {
+        const clean = String(status || '').trim().toUpperCase();
+        if (clean === 'ONLINE') return 'online';
+        if (clean === 'GEOBLOCKED' || clean === 'GEOBLOCK') return 'geoblocked';
+        if (clean === 'OFFLINE') return 'offline';
+        return 'offline';
+    }
+
+    function checkerBatchApiUrl() {
+        const value = String(checkerApiInput.value || '').trim();
+        if (!value) return '';
+        return value.replace(/\/api\/check-stream\/?$/i, '/api/check-streams');
+    }
+
+    function backendCheckerHeaders() {
+        return {
+            'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20 Player2TV/1.0 (SmartTV)',
+            'Accept': '*/*'
+        };
+    }
+
     function looksLikeGeoBlockedPage(text) {
         const sample = String(text || '').slice(0, 5000).toLowerCase();
         return sample.includes('geo-block') ||
@@ -1768,6 +1953,37 @@
         }
     }
 
+    async function checkChannelsViaBackend(channels) {
+        const apiUrl = checkerBatchApiUrl();
+        if (!apiUrl || !channels.length) return null;
+        const timeoutMs = Math.min(120000, Math.max(15000, channels.length * 800));
+        const response = await fetchWithTimeout(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                channels: channels.map(channel => ({ url: channel.url })),
+                headers: backendCheckerHeaders()
+            })
+        }, timeoutMs);
+        if (!response.ok) throw new Error(`Checker API HTTP ${response.status}`);
+        const payload = await response.json();
+        if (!payload || !Array.isArray(payload.results)) throw new Error('Checker API returned an invalid response');
+        return payload.results;
+    }
+
+    function applyCheckResult(channel, result) {
+        channel.status = normalizeCheckStatus(result && result.status);
+        channel.latencyMs = result && Number.isFinite(Number(result.latency_ms)) ? Number(result.latency_ms) : 0;
+        channel.errorDetails = result && result.error_details ? String(result.error_details) : '';
+        const currentIndex = playlistChannels.indexOf(channel);
+        const badge = currentIndex !== -1 ? document.getElementById(`status-${currentIndex}`) : null;
+        if (badge) {
+            badge.className = `status-badge status-${channel.status}`;
+            badge.innerText = statusLabel(channel.status);
+            badge.title = statusTooltip(channel);
+        }
+    }
+
     async function checkStreamUrl(url) {
         const cleanUrl = url.trim();
         if (!cleanUrl) return 'offline';
@@ -1838,6 +2054,32 @@
         const totalChannels = channelsToCheck.length;
         updateCheckProgress(0, totalChannels);
 
+        try {
+            checkProgressText.innerText = 'Checking channels with backend...';
+            const backendResults = await checkChannelsViaBackend(channelsToCheck);
+            if (backendResults) {
+                backendResults.forEach((result, index) => {
+                    const channel = channelsToCheck[index];
+                    if (!channel) return;
+                    applyCheckResult(channel, result);
+                    updateCheckProgress(index + 1, totalChannels);
+                });
+                updateStats();
+                filterAndRender();
+                if (textEditorPanel.classList.contains('active')) {
+                    m3uTextEditor.value = buildM3UContent();
+                    textSaveStatus.innerText = 'Statuses updated from backend check';
+                }
+                checkBtn.disabled = false;
+                checkBtn.innerText = '⚡ Check Status';
+                updateCheckProgress(totalChannels, totalChannels);
+                setTimeout(() => checkProgressPanel.classList.remove('active'), 1200);
+                return;
+            }
+        } catch (err) {
+            checkProgressText.innerText = `Backend checker unavailable; using browser fallback`;
+        }
+
         const concurrency = 12;
         let nextIndex = 0;
         let completed = 0;
@@ -1848,13 +2090,17 @@
             const badge = currentIndex !== -1 ? document.getElementById(`status-${currentIndex}`) : null;
             if (badge) badge.innerText = 'TRYING';
             try {
-                channel.status = await checkStreamUrl(channel.url);
+                applyCheckResult(channel, {
+                    status: await checkStreamUrl(channel.url),
+                    latency_ms: 0,
+                    error_details: 'Browser fallback check'
+                });
             } catch (err) {
-                channel.status = 'offline';
-            }
-            if (badge) {
-                badge.className = `status-badge status-${channel.status}`;
-                badge.innerText = statusLabel(channel.status);
+                applyCheckResult(channel, {
+                    status: 'offline',
+                    latency_ms: 0,
+                    error_details: err && err.message ? err.message : 'Browser fallback failed'
+                });
             }
             updateStats();
             completed++;
@@ -2006,9 +2252,9 @@
 
     function sortByCategoryOrder() {
         playlistChannels.sort((a, b) => {
-            const rankDiff = autoCategoryRank(a.group) - autoCategoryRank(b.group);
-            if (rankDiff !== 0) return rankDiff;
-            return a.name.localeCompare(b.name);
+            const categoryDiff = compareCategoryNames(a.group, b.group);
+            if (categoryDiff !== 0) return categoryDiff;
+            return String(a.name || '').localeCompare(String(b.name || ''));
         });
     }
 
