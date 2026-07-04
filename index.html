@@ -179,6 +179,12 @@
             cursor: text;
         }
 
+        .key-input {
+            width: 260px;
+            cursor: text;
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+
         .status-badge {
             padding: 2px 4px;
             border-radius: 3px;
@@ -211,6 +217,73 @@
         }
 
         .text-editor-panel.active { display: block; }
+
+        .preview-panel {
+            display: none;
+            position: fixed;
+            top: 72px;
+            right: 18px;
+            width: min(720px, calc(100vw - 36px));
+            height: min(460px, calc(100vh - 36px));
+            min-width: min(320px, calc(100vw - 20px));
+            min-height: 260px;
+            max-width: calc(100vw - 20px);
+            max-height: calc(100vh - 20px);
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 8px;
+            z-index: 1000;
+            resize: both;
+            overflow: auto;
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+        }
+
+        .preview-panel.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .preview-panel.dragging { opacity: 0.96; }
+
+        .preview-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 8px;
+            flex: 0 0 auto;
+            cursor: move;
+            user-select: none;
+            touch-action: none;
+        }
+
+        .preview-header > div:first-child {
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .preview-title {
+            font-weight: 700;
+            color: #cbd5e1;
+        }
+
+        .preview-status {
+            color: #94a3b8;
+            margin-left: 8px;
+            overflow-wrap: anywhere;
+        }
+
+        .preview-video {
+            width: 100%;
+            height: calc(100% - 44px);
+            min-height: 180px;
+            max-height: none;
+            flex: 1 1 auto;
+            background: #000;
+            border-radius: 4px;
+            object-fit: contain;
+        }
 
         #m3uTextEditor {
             width: 100%;
@@ -294,9 +367,11 @@
         <button id="fetchUrlBtn">🌐 Fetch Link</button>
         <button id="mergeUrlBtn">➕ Merge Link</button>
 
+        <button id="addChannelBtn">➕ Add Channel</button>
         <button id="checkBtn" disabled>⚡ Check Status</button>
         <button id="sortBtn" disabled>🔀 Sort A-Z</button>
         <button id="autoSortBtn" disabled>🧭 Auto Sort Groups</button>
+        <button id="autoIconsBtn" disabled>🖼️ Auto Grab Icons</button>
         <button id="deleteDuplicatesBtn" disabled>🧹 Delete Duplicates</button>
         <button id="deleteOfflineBtn" disabled>🗑️ Delete Offline</button>
         <button id="deleteGeoblockedBtn" disabled>🚫 Delete Geoblocked</button>
@@ -334,6 +409,20 @@
         </div>
     </div>
 
+    <div class="preview-panel" id="previewPanel">
+        <div class="preview-header">
+            <div>
+                <span class="preview-title" id="previewTitle">Preview</span>
+                <span class="preview-status" id="previewStatus"></span>
+            </div>
+            <div>
+                <button id="stopPreviewBtn">Stop</button>
+                <button id="closePreviewBtn">Close</button>
+            </div>
+        </div>
+        <video class="preview-video" id="previewVideo" controls playsinline></video>
+    </div>
+
     <div class="table-container">
         <table>
             <thead>
@@ -343,6 +432,7 @@
                     <th>Channel Name</th>
                     <th>Category Group</th>
                     <th>EPG ID</th>
+                    <th>Key</th>
                     <th>Stream URL</th>
                     <th style="width: 80px;">Status</th>
                     <th style="width: 40px;">Action</th>
@@ -354,6 +444,7 @@
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/shaka-player@4.7.11/dist/shaka-player.compiled.min.js"></script>
 <script>
     let playlistChannels = [];
     let originalOrder = [];
@@ -365,8 +456,10 @@
     const fetchUrlBtn = document.getElementById('fetchUrlBtn');
     const mergeUrlBtn = document.getElementById('mergeUrlBtn');
     const checkBtn = document.getElementById('checkBtn');
+    const addChannelBtn = document.getElementById('addChannelBtn');
     const sortBtn = document.getElementById('sortBtn');
     const autoSortBtn = document.getElementById('autoSortBtn');
+    const autoIconsBtn = document.getElementById('autoIconsBtn');
     const deleteDuplicatesBtn = document.getElementById('deleteDuplicatesBtn');
     const deleteOfflineBtn = document.getElementById('deleteOfflineBtn');
     const deleteGeoblockedBtn = document.getElementById('deleteGeoblockedBtn');
@@ -389,6 +482,67 @@
     const checkProgressText = document.getElementById('checkProgressText');
     const checkProgressPercent = document.getElementById('checkProgressPercent');
     const checkProgressFill = document.getElementById('checkProgressFill');
+    const previewPanel = document.getElementById('previewPanel');
+    const previewHeader = previewPanel.querySelector('.preview-header');
+    const previewTitle = document.getElementById('previewTitle');
+    const previewStatus = document.getElementById('previewStatus');
+    const previewVideo = document.getElementById('previewVideo');
+    const stopPreviewBtn = document.getElementById('stopPreviewBtn');
+    const closePreviewBtn = document.getElementById('closePreviewBtn');
+    let previewPlayer = null;
+    let previewDrag = null;
+    let activePreviewChannel = null;
+
+    function clamp(value, min, max) {
+        return Math.min(Math.max(value, min), max);
+    }
+
+    function clampPreviewToViewport() {
+        if (!previewPanel.classList.contains('active')) return;
+        const rect = previewPanel.getBoundingClientRect();
+        const left = clamp(rect.left, 10, Math.max(10, window.innerWidth - Math.min(rect.width, window.innerWidth - 20) - 10));
+        const top = clamp(rect.top, 10, Math.max(10, window.innerHeight - 48));
+        previewPanel.style.left = `${left}px`;
+        previewPanel.style.top = `${top}px`;
+        previewPanel.style.right = 'auto';
+    }
+
+    previewHeader.addEventListener('pointerdown', (event) => {
+        if (event.target.closest('button')) return;
+        const rect = previewPanel.getBoundingClientRect();
+        previewDrag = {
+            pointerId: event.pointerId,
+            offsetX: event.clientX - rect.left,
+            offsetY: event.clientY - rect.top
+        };
+        previewPanel.style.left = `${rect.left}px`;
+        previewPanel.style.top = `${rect.top}px`;
+        previewPanel.style.right = 'auto';
+        previewPanel.classList.add('dragging');
+        previewHeader.setPointerCapture(event.pointerId);
+        event.preventDefault();
+    });
+
+    previewHeader.addEventListener('pointermove', (event) => {
+        if (!previewDrag || event.pointerId !== previewDrag.pointerId) return;
+        const maxLeft = Math.max(10, window.innerWidth - previewPanel.offsetWidth - 10);
+        const maxTop = Math.max(10, window.innerHeight - 48);
+        previewPanel.style.left = `${clamp(event.clientX - previewDrag.offsetX, 10, maxLeft)}px`;
+        previewPanel.style.top = `${clamp(event.clientY - previewDrag.offsetY, 10, maxTop)}px`;
+    });
+
+    function endPreviewDrag(event) {
+        if (!previewDrag || event.pointerId !== previewDrag.pointerId) return;
+        previewPanel.classList.remove('dragging');
+        previewDrag = null;
+        if (previewHeader.hasPointerCapture(event.pointerId)) {
+            previewHeader.releasePointerCapture(event.pointerId);
+        }
+    }
+
+    previewHeader.addEventListener('pointerup', endPreviewDrag);
+    previewHeader.addEventListener('pointercancel', endPreviewDrag);
+    window.addEventListener('resize', clampPreviewToViewport);
 
     // 1. Process Local M3U File
     fileInput.addEventListener('change', (e) => {
@@ -576,7 +730,7 @@
                     });
                 }
             } else if (currentChannel && line.startsWith('#')) {
-                currentChannel.props.push(line);
+                currentChannel.props.push(normalizeLicenseKeyLine(line));
             }
         }
         originalOrder = [...playlistChannels];
@@ -587,8 +741,50 @@
         return String(value || '')
             .replace(/&/g, '&amp;')
             .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
+    }
+
+    function licenseKeyPropIndex(channel) {
+        return (channel.props || []).findIndex(line =>
+            /^#KODIPROP:inputstream\.adaptive\.license_key=/i.test(String(line || '').trim())
+        );
+    }
+
+    function getLicenseKey(channel) {
+        const idx = licenseKeyPropIndex(channel);
+        if (idx === -1) return '';
+        const line = String(channel.props[idx] || '');
+        const equalIndex = line.indexOf('=');
+        return equalIndex === -1 ? '' : line.slice(equalIndex + 1).trim();
+    }
+
+    function setLicenseKey(channel, value) {
+        const rawValue = String(value || '').trim();
+        const cleanValue = clearKeyHexStringFromValue(rawValue) || rawValue;
+        channel.props = channel.props || [];
+        const keyLine = `#KODIPROP:inputstream.adaptive.license_key=${cleanValue}`;
+        const keyIndex = licenseKeyPropIndex(channel);
+
+        if (!cleanValue) {
+            if (keyIndex !== -1) channel.props.splice(keyIndex, 1);
+            return;
+        }
+
+        if (keyIndex !== -1) {
+            channel.props[keyIndex] = keyLine;
+            return;
+        }
+
+        const licenseTypeIndex = channel.props.findIndex(line =>
+            /^#KODIPROP:inputstream\.adaptive\.license_type=/i.test(String(line || '').trim())
+        );
+        if (licenseTypeIndex !== -1) {
+            channel.props.splice(licenseTypeIndex + 1, 0, keyLine);
+        } else {
+            channel.props.push(keyLine);
+        }
     }
 
     function customPlaylistGroups() {
@@ -627,16 +823,404 @@
                     </select>
                 </td>
                 <td><input class="epg-input" type="text" value="${escapeHtml(ch.epgId || '')}" onblur="updateField(${channelIndex}, 'epgId', this.value)"></td>
+                <td><input class="key-input" type="text" value="${escapeHtml(getLicenseKey(ch))}" onblur="updateField(${channelIndex}, 'licenseKey', this.value)"></td>
                 <td><div class="editable" contenteditable="true" onblur="updateField(${channelIndex}, 'url', this.innerText)">${ch.url}</div></td>
                 <td><span class="status-badge status-${ch.status}" id="status-${channelIndex}">${statusLabel(ch.status)}</span></td>
-                <td><button class="btn-danger" onclick="deleteChannel(${channelIndex})">🗑️</button></td>
+                <td><button onclick="playChannel(${channelIndex})">▶</button> <button class="btn-danger" onclick="deleteChannel(${channelIndex})">🗑️</button></td>
             `;
             tableBody.appendChild(tr);
         });
     }
 
+    function base64ToHex(value) {
+        try {
+            let normalized = String(value || '').trim().replace(/-/g, '+').replace(/_/g, '/');
+            const padding = normalized.length % 4;
+            if (padding) normalized += '='.repeat(4 - padding);
+            const binary = atob(normalized);
+            return Array.from(binary, char => char.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+        } catch (_) {
+            return '';
+        }
+    }
+
+    function decodeLegacyKeyText(value) {
+        try {
+            return decodeURIComponent(String(value || '').trim().replace(/\+/g, '%20'));
+        } catch (_) {
+            return String(value || '').trim();
+        }
+    }
+
+    function drmKeyValueToHex(value) {
+        const text = String(value || '').trim().replace(/^['"]|['"]$/g, '');
+        const hex = text.replace(/[^a-fA-F0-9]/g, '').toLowerCase();
+        if (hex.length === 32) return hex;
+        return base64ToHex(text);
+    }
+
+    function clearKeyPairsFromValue(value) {
+        const cleanValue = String(value || '').trim().replace(/^['"]|['"]$/g, '');
+        if (!cleanValue) return {};
+        const clearKeys = {};
+
+        if (cleanValue.startsWith('{')) {
+            try {
+                const json = JSON.parse(cleanValue);
+                const keys = Array.isArray(json.keys) ? json.keys : [];
+                keys.forEach(entry => {
+                    const keyHex = drmKeyValueToHex(entry?.k);
+                    const kidHex = drmKeyValueToHex(entry?.kid);
+                    if (keyHex.length === 32 && kidHex.length === 32) {
+                        clearKeys[kidHex.toLowerCase()] = keyHex.toLowerCase();
+                    }
+                });
+                return clearKeys;
+            } catch (_) {
+                return {};
+            }
+        }
+
+        decodeLegacyKeyText(cleanValue).split(/[;,\s]+/).forEach(pair => {
+            const separator = pair.includes(':') ? ':' : '=';
+            const parts = pair.split(separator).map(part => part.trim().replace(/^0x/i, '').replace(/[^a-fA-F0-9]/g, '').toLowerCase());
+            if (parts.length === 2 && parts[0].length === 32 && parts[1].length === 32) {
+                clearKeys[parts[0]] = parts[1];
+            }
+        });
+        return clearKeys;
+    }
+
+    function clearKeyHexStringFromValue(value) {
+        const clearKeys = clearKeyPairsFromValue(value);
+        return Object.entries(clearKeys).map(([kid, key]) => `${kid}:${key}`).join(',');
+    }
+
+    function clearKeyConfigFromValue(value) {
+        const clearKeys = clearKeyPairsFromValue(value);
+        return Object.keys(clearKeys).length ? {
+            drm: {
+                clearKeys
+            }
+        } : {};
+    }
+
+    function swapGuidEndianHex(hex) {
+        const clean = String(hex || '').replace(/[^a-fA-F0-9]/g, '').toLowerCase();
+        if (clean.length !== 32) return '';
+        const bytes = clean.match(/../g);
+        const swapped = [
+            bytes[3], bytes[2], bytes[1], bytes[0],
+            bytes[5], bytes[4],
+            bytes[7], bytes[6],
+            ...bytes.slice(8)
+        ];
+        return swapped.join('');
+    }
+
+    function clearKeyConfigVariantsFromValue(value) {
+        const pairs = clearKeyPairsFromValue(value);
+        const entries = Object.entries(pairs);
+        if (!entries.length) return [];
+
+        const variants = [];
+        const seen = new Set();
+        const addVariant = (label, mappedEntries) => {
+            const clearKeys = {};
+            mappedEntries.forEach(([kid, key]) => {
+                if (/^[a-f0-9]{32}$/i.test(kid) && /^[a-f0-9]{32}$/i.test(key)) {
+                    clearKeys[kid.toLowerCase()] = key.toLowerCase();
+                }
+            });
+            const signature = JSON.stringify(clearKeys);
+            if (!Object.keys(clearKeys).length || seen.has(signature)) return;
+            seen.add(signature);
+            variants.push({ label, config: { drm: { clearKeys } } });
+        };
+
+        addVariant('normal key id', entries);
+        addVariant('alternate key id byte order', entries.map(([kid, key]) => [swapGuidEndianHex(kid), key]));
+        addVariant('reversed key pair', entries.map(([kid, key]) => [key, kid]));
+        return variants;
+    }
+
+    function normalizeLicenseKeyLine(line) {
+        const text = String(line || '').trim();
+        if (!/^#KODIPROP:inputstream\.adaptive\.license_key=/i.test(text)) return line;
+        const equalIndex = text.indexOf('=');
+        if (equalIndex === -1) return line;
+        const normalizedKey = clearKeyHexStringFromValue(text.slice(equalIndex + 1));
+        return normalizedKey ? `${text.slice(0, equalIndex + 1)}${normalizedKey}` : line;
+    }
+
+    function shortUrl(value) {
+        const text = String(value || '');
+        return text.length > 130 ? `${text.slice(0, 90)}...${text.slice(-32)}` : text;
+    }
+
+    function shakaErrorData(err) {
+        return err?.data || err?.detail?.data || [];
+    }
+
+    function httpStatusExplanation(status) {
+        const explanations = {
+            0: 'The browser got no readable HTTP response.',
+            400: 'The server rejected the request as invalid.',
+            401: 'The stream needs authorization or a fresh token.',
+            403: 'Access is forbidden. This can be auth, token, ISP, or region blocking.',
+            404: 'The requested manifest or segment was not found.',
+            410: 'The requested stream URL is gone or expired.',
+            451: 'The server says this content is blocked for legal or regional reasons.',
+            429: 'The server is rate-limiting too many requests.',
+            500: 'The stream server failed internally.',
+            502: 'The CDN or gateway received a bad upstream response.',
+            503: 'The stream service is unavailable right now.',
+            504: 'The CDN or gateway timed out waiting for the stream server.'
+        };
+        return explanations[status] || (status >= 500
+            ? 'The CDN or stream server is failing.'
+            : 'The stream server returned an error status.');
+    }
+
+    function shakaCodeExplanation(code) {
+        const explanations = {
+            1000: 'Unsupported URL scheme. The stream URL is not a normal http/https playable URL.',
+            1001: 'Network request failed before Shaka got a response.',
+            1002: 'Network/HTTP error. Shaka could not download the manifest, key file, or a media segment.',
+            1003: 'Network timeout. The stream server did not respond fast enough.',
+            1004: 'Bad data URI in the stream.',
+            2000: 'Bad or unsupported manifest data.',
+            3000: 'Browser media pipeline error.',
+            4000: 'Manifest parsing/loading error.',
+            5000: 'Streaming engine error while buffering or fetching segments.',
+            6000: 'Encrypted stream, but Shaka could not detect a usable DRM system.',
+            6001: 'The browser does not allow the requested DRM/key-system configuration.',
+            6002: 'The browser found the DRM system but failed to create the DRM session.',
+            6003: 'The browser created DRM but could not attach it to the video element.',
+            6005: 'The browser refused to create a DRM session.',
+            6006: 'The browser could not generate a DRM license request.',
+            6007: 'The DRM license request failed.',
+            6008: 'The DRM license response was rejected.',
+            6010: 'The content is encrypted but the manifest does not include usable DRM info.',
+            6012: 'The stream needs a license server, but none was configured.',
+            6020: 'This browser has no EME/DRM support.',
+            7000: 'Playback load was interrupted by another load/stop action.',
+            9000: 'Offline/storage playback is not supported here.'
+        };
+        if (explanations[code]) return explanations[code];
+        if (code >= 1000 && code < 2000) return 'Network layer error. The browser could not fetch something Shaka needs.';
+        if (code >= 2000 && code < 3000) return 'Text or manifest parsing error.';
+        if (code >= 3000 && code < 4000) return 'Media decoding or browser video pipeline error.';
+        if (code >= 4000 && code < 5000) return 'Manifest error. The playlist structure may be unsupported or broken.';
+        if (code >= 5000 && code < 6000) return 'Streaming error while loading or buffering media segments.';
+        if (code >= 6000 && code < 7000) return 'DRM error. The key, license, browser DRM support, or stream DRM metadata may be wrong.';
+        if (code >= 7000 && code < 8000) return 'Player operation error.';
+        return 'Unknown Shaka error.';
+    }
+
+    function shakaTryHint(code) {
+        if (code >= 1000 && code < 2000) return 'Try opening the failed URL in the browser, refreshing the playlist link, or using a stream/proxy source that allows browser CORS.';
+        if (code >= 3000 && code < 4000) return 'Try Chrome or Edge, or another channel quality/URL if available.';
+        if (code >= 4000 && code < 6000) return 'Try refreshing the stream URL; the manifest may be expired, malformed, or using unsupported encryption/media.';
+        if (code >= 6000 && code < 7000) return 'Check the Key column, use localhost, and confirm the stream really uses ClearKey instead of Widevine/PlayReady license-server DRM.';
+        return 'Try replaying the channel or checking whether the stream URL still works.';
+    }
+
+    function networkErrorHint(status, detail) {
+        const text = String(detail || '').toLowerCase();
+        if (status === 0 || text.includes('failed to fetch') || text.includes('cors')) {
+            return 'The stream server is probably blocking browser CORS. Android apps can still play some of these, but a browser cannot without a streaming proxy.';
+        }
+        if (status === 401 || status === 403) return 'The link may need auth headers, a fresh token, or your ISP/location may be blocked.';
+        if (status === 404 || status === 410) return 'The manifest or segment URL may be expired or removed.';
+        if (status === 451) return 'The server is reporting a legal/region block.';
+        if (status >= 500) return 'The CDN/server is failing right now.';
+        return 'The browser could not fetch the manifest or one of its video/audio segments.';
+    }
+
+    function playbackErrorMessage(err, channel) {
+        const code = err?.code || err?.detail?.code;
+        const data = shakaErrorData(err);
+        const detail = data[2] || data[0] || err?.message || '';
+        if (code === 1002) {
+            const failedUrl = data.find(item => typeof item === 'string' && /^https?:\/\//i.test(item)) || data[0] || '';
+            const status = data.find(item => typeof item === 'number') || 0;
+            const statusText = status ? ` HTTP ${status}.` : '';
+            const urlText = failedUrl ? ` Failed URL: ${shortUrl(failedUrl)}.` : '';
+            const httpText = status ? ` HTTP meaning: ${httpStatusExplanation(status)}` : '';
+            return `Shaka error 1002. Meaning: ${shakaCodeExplanation(1002)}${statusText}${httpText}${urlText} Cause: ${networkErrorHint(status, detail)} Try: ${shakaTryHint(1002)}`;
+        }
+        if (code === 6002) {
+            const hasKey = Boolean(getLicenseKey(channel));
+            const localFileHint = location.protocol === 'file:' || !window.isSecureContext
+                ? ' Open this editor through http://localhost:8765/index.html for DRM preview.'
+                : '';
+            const detailHint = detail ? ` Browser says: ${detail}` : '';
+            return hasKey
+                ? `Shaka error 6002. Meaning: ${shakaCodeExplanation(6002)} Cause: The key may not match, the stream may not be ClearKey, or the browser cannot create the DRM session.${detailHint}${localFileHint} Try: ${shakaTryHint(6002)}`
+                : `Shaka error 6002. Meaning: ${shakaCodeExplanation(6002)} Cause: This stream is encrypted and needs a ClearKey in the Key column.${detailHint}${localFileHint} Try: ${shakaTryHint(6002)}`;
+        }
+        if (code) {
+            const detailHint = detail ? ` Detail: ${detail}` : '';
+            return `Shaka error ${code}. Meaning: ${shakaCodeExplanation(code)}${detailHint} Try: ${shakaTryHint(code)}`;
+        }
+        return err?.message || String(err || 'Unknown playback error');
+    }
+
+    async function ensureClearKeyCanStart() {
+        if (!navigator.requestMediaKeySystemAccess) {
+            throw new Error('This browser has no EME DRM support. Try Chrome or Edge on http://localhost.');
+        }
+    }
+
+    async function stopPreview() {
+        if (previewPlayer) {
+            await previewPlayer.destroy().catch(() => {});
+            previewPlayer = null;
+        }
+        previewVideo.pause();
+        previewVideo.removeAttribute('src');
+        previewVideo.load();
+        if (previewVideo.setMediaKeys) {
+            await previewVideo.setMediaKeys(null).catch(() => {});
+        }
+        previewStatus.innerText = 'Stopped';
+    }
+
+    async function ensurePreviewPlayer() {
+        if (!window.shaka) throw new Error('Preview player library is not loaded. Check your internet connection.');
+        shaka.polyfill.installAll();
+        if (!shaka.Player.isBrowserSupported()) {
+            throw new Error('This browser does not support the video/DRM features needed for Shaka playback.');
+        }
+        if (previewPlayer) await previewPlayer.destroy().catch(() => {});
+        previewPlayer = new shaka.Player(previewVideo);
+        previewPlayer.configure({
+            manifest: {
+                retryParameters: {
+                    maxAttempts: 4,
+                    baseDelay: 500,
+                    backoffFactor: 2,
+                    fuzzFactor: 0.5,
+                    timeout: 15000
+                }
+            },
+            streaming: {
+                retryParameters: {
+                    maxAttempts: 4,
+                    baseDelay: 500,
+                    backoffFactor: 2,
+                    fuzzFactor: 0.5,
+                    timeout: 15000
+                }
+            },
+            drm: {
+                retryParameters: {
+                    maxAttempts: 3,
+                    baseDelay: 500,
+                    backoffFactor: 2,
+                    fuzzFactor: 0.5,
+                    timeout: 15000
+                }
+            }
+        });
+        previewPlayer.addEventListener('error', event => {
+            previewStatus.innerText = `Could not play: ${playbackErrorMessage(event.detail || event, activePreviewChannel || {})}`;
+        });
+        return previewPlayer;
+    }
+
+    window.playChannel = async function(index) {
+        const channel = playlistChannels[index];
+        if (!channel) return;
+        const url = String(channel.url || '').trim();
+        if (!url) return alert('This channel has no stream URL.');
+
+        activePreviewChannel = channel;
+        previewPanel.classList.add('active');
+        previewTitle.innerText = channel.name || 'Preview';
+        previewStatus.innerText = 'Loading...';
+
+        try {
+            if (previewPlayer) {
+                await previewPlayer.destroy().catch(() => {});
+                previewPlayer = null;
+            }
+            previewStatus.innerText = 'Loading...';
+            const ext = streamExtension(url);
+
+            if ((ext === 'mpd' || ext === 'm3u8') && window.shaka) {
+                const rawKey = getLicenseKey(channel);
+                const keyVariants = clearKeyConfigVariantsFromValue(rawKey);
+                if (rawKey && !keyVariants.length) {
+                    throw new Error('ClearKey must be keyid:key hex, or JSON with keys containing kid and k.');
+                }
+                if (rawKey) {
+                    await ensureClearKeyCanStart();
+                }
+                const variantsToTry = keyVariants.length ? keyVariants : [{ label: '', config: null }];
+                let lastPlayError = null;
+
+                for (let attempt = 0; attempt < variantsToTry.length; attempt++) {
+                    const variant = variantsToTry[attempt];
+                    try {
+                        if (attempt > 0 && previewPlayer) {
+                            await previewPlayer.destroy().catch(() => {});
+                            previewPlayer = null;
+                        }
+                        previewStatus.innerText = variant.label ? `Loading with ${variant.label}...` : 'Loading...';
+                        const player = await ensurePreviewPlayer();
+                        if (variant.config?.drm) player.configure(variant.config);
+                        await player.load(url);
+                        lastPlayError = null;
+                        break;
+                    } catch (err) {
+                        lastPlayError = err;
+                    }
+                }
+
+                if (lastPlayError) throw lastPlayError;
+            } else {
+                previewVideo.src = url;
+                previewVideo.load();
+            }
+
+            await previewVideo.play();
+            previewStatus.innerText = 'Playing';
+        } catch (err) {
+            if (streamExtension(url) === 'm3u8') {
+                try {
+                    previewVideo.src = url;
+                    previewVideo.load();
+                    await previewVideo.play();
+                    previewStatus.innerText = 'Playing';
+                    return;
+                } catch (nativeErr) {
+                    err = nativeErr;
+                }
+            }
+            previewStatus.innerText = `Could not play: ${playbackErrorMessage(err, channel)}`;
+        }
+    };
+
+    stopPreviewBtn.addEventListener('click', () => stopPreview());
+    closePreviewBtn.addEventListener('click', async () => {
+        await stopPreview();
+        previewPanel.classList.remove('active');
+    });
+
     // 5. Modifications Management
     window.updateField = function(index, field, value) {
+        if (field === 'licenseKey') {
+            setLicenseKey(playlistChannels[index], value);
+            filterAndRender();
+            if (textEditorPanel.classList.contains('active')) {
+                m3uTextEditor.value = buildM3UContent();
+                textSaveStatus.innerText = 'Text updated from table';
+            }
+            return;
+        }
+
         const cleanValue = value.trim();
         playlistChannels[index][field] = field === 'group' && !getGroupOptions(playlistChannels[index]?.group).includes(cleanValue)
             ? 'Entertainment'
@@ -740,6 +1324,213 @@
             textSaveStatus.innerText = 'Geoblocked channels removed from table';
         }
         alert(`Removed ${removedCount} geoblocked channel${removedCount === 1 ? '' : 's'}.`);
+    });
+
+    const logoDomainRules = [
+        { terms: ['hbo'], domain: 'hbo.com' },
+        { terms: ['cinemax'], domain: 'cinemax.com' },
+        { terms: ['cnn'], domain: 'cnn.com' },
+        { terms: ['bbc'], domain: 'bbc.com' },
+        { terms: ['bbc earth'], domain: 'bbcearth.com' },
+        { terms: ['cnbc'], domain: 'cnbc.com' },
+        { terms: ['bloomberg'], domain: 'bloomberg.com' },
+        { terms: ['al jazeera', 'aljazeera'], domain: 'aljazeera.com' },
+        { terms: ['fox news'], domain: 'foxnews.com' },
+        { terms: ['fox sports'], domain: 'foxsports.com' },
+        { terms: ['espn'], domain: 'espn.com' },
+        { terms: ['bein', 'beinsports'], domain: 'beinsports.com' },
+        { terms: ['nba'], domain: 'nba.com' },
+        { terms: ['nfl'], domain: 'nfl.com' },
+        { terms: ['mlb'], domain: 'mlb.com' },
+        { terms: ['ufc'], domain: 'ufc.com' },
+        { terms: ['wwe'], domain: 'wwe.com' },
+        { terms: ['discovery'], domain: 'discovery.com' },
+        { terms: ['history'], domain: 'history.com' },
+        { terms: ['nat geo', 'national geographic'], domain: 'nationalgeographic.com' },
+        { terms: ['animal planet'], domain: 'animalplanet.com' },
+        { terms: ['nick', 'nickelodeon'], domain: 'nick.com' },
+        { terms: ['disney'], domain: 'disney.com' },
+        { terms: ['boomerang'], domain: 'boomerangtv.com' },
+        { terms: ['cartoon network'], domain: 'cartoonnetwork.com' },
+        { terms: ['mtv'], domain: 'mtv.com' },
+        { terms: ['tubi'], domain: 'tubitv.com' },
+        { terms: ['pluto'], domain: 'pluto.tv' },
+        { terms: ['abc'], domain: 'abc.com' },
+        { terms: ['cbs'], domain: 'cbs.com' },
+        { terms: ['nbc'], domain: 'nbc.com' },
+        { terms: ['pbs'], domain: 'pbs.org' },
+        { terms: ['gma', 'kapuso'], domain: 'gmanetwork.com' },
+        { terms: ['abs cbn', 'abs-cbn', 'kapamilya'], domain: 'abs-cbn.com' },
+        { terms: ['tv5', 'one sports', 'one news'], domain: 'tv5.com.ph' },
+        { terms: ['ptv'], domain: 'ptvnews.ph' },
+        { terms: ['untv'], domain: 'untvweb.com' },
+        { terms: ['net 25'], domain: 'net25.com' },
+        { terms: ['anc'], domain: 'news.abs-cbn.com' },
+        { terms: ['dzbb'], domain: 'gmanetwork.com' },
+        { terms: ['dzrh'], domain: 'dzrh.com.ph' },
+        { terms: ['cnn philippines'], domain: 'cnnphilippines.com' },
+        { terms: ['cinema one'], domain: 'cinemaone.tv' },
+        { terms: ['myx'], domain: 'myx.global' },
+        { terms: ['viva'], domain: 'viva.com.ph' }
+    ];
+
+    function channelLogoSearchText(channel) {
+        return normalizeWords(`${channel?.name || ''} ${channel?.group || ''} ${channel?.epgId || ''}`);
+    }
+
+    function cleanChannelLogoQuery(channel) {
+        return String(channel?.name || channel?.epgId || '')
+            .replace(/\b(raw|hd|fhd|uhd|sd|4k|60fps|50fps|30fps|24\/7|live|channel|tv)\b/gi, ' ')
+            .replace(/\[[^\]]*\]|\([^\)]*\)/g, ' ')
+            .replace(/[^a-z0-9+&.\- ]+/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function logoCandidatesForDomain(domain) {
+        if (!domain) return [];
+        const cleanDomain = String(domain).replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0];
+        return [
+            `https://logo.clearbit.com/${encodeURIComponent(cleanDomain)}`,
+            `https://www.google.com/s2/favicons?sz=128&domain=${encodeURIComponent(cleanDomain)}`,
+            `https://icons.duckduckgo.com/ip3/${encodeURIComponent(cleanDomain)}.ico`
+        ];
+    }
+
+    function logoDomainsForChannel(channel) {
+        const text = channelLogoSearchText(channel);
+        const domains = [];
+        logoDomainRules.forEach(rule => {
+            if (rule.terms.some(term => text.includes(normalizeWords(term)))) {
+                domains.push(rule.domain);
+            }
+        });
+        return [...new Set(domains)];
+    }
+
+    function wikiLogoSearchUrls(channel) {
+        const query = cleanChannelLogoQuery(channel);
+        if (!query || query.length < 2) return [];
+        const searches = [
+            `${query} television channel logo`,
+            `${query} TV channel logo`,
+            `${query} logo`
+        ];
+        return [...new Set(searches)].map(search =>
+            `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(search)}&gsrlimit=6&prop=pageimages|pageprops&piprop=thumbnail&pithumbsize=256&format=json&origin=*`
+        );
+    }
+
+    function wikiTitleScore(title, channel) {
+        const titleText = normalizeWords(title);
+        const queryText = normalizeWords(cleanChannelLogoQuery(channel));
+        if (!titleText || !queryText) return 0;
+        let score = 0;
+        if (titleText === queryText) score += 100;
+        if (titleText.includes(queryText)) score += 70;
+        queryText.split(/\s+/).filter(word => word.length > 1).forEach(word => {
+            if (titleText.includes(word)) score += 12;
+        });
+        if (titleText.includes('television')) score += 16;
+        if (titleText.includes('channel')) score += 14;
+        if (titleText.includes('tv')) score += 10;
+        if (titleText.includes('radio')) score -= 20;
+        if (titleText.includes('station') && !queryText.includes('station')) score -= 8;
+        return score;
+    }
+
+    async function wikipediaLogoCandidates(channel) {
+        const candidates = [];
+        for (const apiUrl of wikiLogoSearchUrls(channel)) {
+            try {
+                const response = await fetch(apiUrl, { cache: 'no-store' });
+                if (!response.ok) continue;
+                const json = await response.json();
+                const pages = Object.values(json?.query?.pages || {})
+                    .filter(page => page?.thumbnail?.source)
+                    .map(page => ({
+                        url: String(page.thumbnail.source).replace(/^http:/i, 'https:'),
+                        score: wikiTitleScore(page.title, channel),
+                        title: page.title
+                    }))
+                    .filter(page => page.score > 0)
+                    .sort((a, b) => b.score - a.score);
+                pages.forEach(page => candidates.push(page.url));
+            } catch (_) {
+                // Ignore search failures and try the next lookup.
+            }
+        }
+        return [...new Set(candidates)];
+    }
+
+    function canLoadImage(url, timeoutMs = 5000) {
+        return new Promise(resolve => {
+            const img = new Image();
+            const timer = setTimeout(() => {
+                cleanup();
+                resolve(false);
+            }, timeoutMs);
+            const cleanup = () => {
+                clearTimeout(timer);
+                img.onload = null;
+                img.onerror = null;
+            };
+            img.onload = () => {
+                const ok = img.naturalWidth >= 16 && img.naturalHeight >= 16;
+                cleanup();
+                resolve(ok);
+            };
+            img.onerror = () => {
+                cleanup();
+                resolve(false);
+            };
+            img.referrerPolicy = 'no-referrer';
+            img.src = url;
+        });
+    }
+
+    async function findLogoForChannel(channel) {
+        const candidates = [
+            ...(await wikipediaLogoCandidates(channel)),
+            ...logoDomainsForChannel(channel).flatMap(logoCandidatesForDomain)
+        ];
+        for (const candidate of candidates) {
+            if (await canLoadImage(candidate)) return candidate;
+        }
+        return '';
+    }
+
+    autoIconsBtn.addEventListener('click', async () => {
+        const targets = playlistChannels.filter(ch => !String(ch.logo || '').trim());
+        if (!targets.length) return alert('All channels already have logo URLs.');
+
+        autoIconsBtn.disabled = true;
+        checkProgressPanel.classList.add('active');
+        checkProgressText.innerText = 'Auto grabbing missing icons...';
+        updateCheckProgress(0, targets.length);
+
+        let updatedCount = 0;
+        for (let i = 0; i < targets.length; i++) {
+            const channel = targets[i];
+            checkProgressText.innerText = `Auto grabbing icons... ${i + 1}/${targets.length}`;
+            const logoUrl = await findLogoForChannel(channel);
+            if (logoUrl) {
+                channel.logo = logoUrl;
+                updatedCount++;
+            }
+            updateCheckProgress(i + 1, targets.length);
+            if ((i + 1) % 10 === 0) filterAndRender();
+        }
+
+        filterAndRender();
+        if (textEditorPanel.classList.contains('active')) {
+            m3uTextEditor.value = buildM3UContent();
+            textSaveStatus.innerText = 'Auto icons applied to table';
+        }
+        autoIconsBtn.disabled = false;
+        checkProgressText.innerText = `Auto icons complete: ${updatedCount}/${targets.length} filled`;
+        setTimeout(() => checkProgressPanel.classList.remove('active'), 1800);
+        alert(`Added ${updatedCount} logo URL${updatedCount === 1 ? '' : 's'} to channels that were missing icons.`);
     });
 
     // 6. Network Stream Validator
@@ -1012,6 +1803,32 @@
         checkProgressPercent.innerText = `${percent}%`;
         checkProgressFill.style.width = `${percent}%`;
     }
+
+    addChannelBtn.addEventListener('click', () => {
+        playlistChannels.push({
+            name: '',
+            logo: '',
+            epgId: '',
+            group: '',
+            attrs: {},
+            attrOrder: [],
+            props: [],
+            url: '',
+            status: 'unchecked'
+        });
+        originalOrder = [...playlistChannels];
+        updateStats();
+        populateCategoryOrderSelect();
+        populateCategories();
+        filterAndRender();
+        if (textEditorPanel.classList.contains('active')) {
+            m3uTextEditor.value = buildM3UContent();
+            textSaveStatus.innerText = 'Text updated from table';
+        }
+        // Scroll to the bottom of the table
+        const tableContainer = document.querySelector('.table-container');
+        tableContainer.scrollTop = tableContainer.scrollHeight;
+    });
 
     checkBtn.addEventListener('click', async () => {
         if (!playlistChannels.length) return;
@@ -1311,7 +2128,8 @@
     function buildM3UContent() {
         let m3uContent = "#EXTM3U\n";
         playlistChannels.forEach(ch => {
-            const propLines = (ch.props || []).length ? `${ch.props.join('\n')}\n` : '';
+            const props = (ch.props || []).map(normalizeLicenseKeyLine);
+            const propLines = props.length ? `${props.join('\n')}\n` : '';
             m3uContent += `${buildExtinfLine(ch)}\n${propLines}${ch.url}\n\n`;
         });
         return m3uContent;
@@ -1354,7 +2172,7 @@
     });
 
     function enableControls() {
-        checkBtn.disabled = false; sortBtn.disabled = false; autoSortBtn.disabled = false; deleteDuplicatesBtn.disabled = false; deleteOfflineBtn.disabled = false; deleteGeoblockedBtn.disabled = false;
+        checkBtn.disabled = false; sortBtn.disabled = false; addChannelBtn.disabled = false; autoSortBtn.disabled = false; autoIconsBtn.disabled = false; deleteDuplicatesBtn.disabled = false; deleteOfflineBtn.disabled = false; deleteGeoblockedBtn.disabled = false;
         categoryOrderSelect.disabled = false; categoryUpBtn.disabled = false; categoryDownBtn.disabled = false;
         categoryFilter.disabled = false; channelSearchInput.disabled = false; textViewBtn.disabled = false; refreshTextBtn.disabled = false; applyTextBtn.disabled = false; exportBtn.disabled = false;
     }
