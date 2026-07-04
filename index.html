@@ -2077,7 +2077,16 @@
                 return;
             }
         } catch (err) {
-            checkProgressText.innerText = `Backend checker unavailable; using browser fallback`;
+            const backendUrl = checkerBatchApiUrl();
+            if (backendUrl) {
+                checkProgressText.innerText = `Backend checker unavailable`;
+                alert(`The backend checker could not be reached:\n${backendUrl}\n\n${err && err.message ? err.message : err}\n\nNo browser fallback was used because browser CORS can mark online streams as offline.`);
+                checkBtn.disabled = false;
+                checkBtn.innerText = '⚡ Check Status';
+                setTimeout(() => checkProgressPanel.classList.remove('active'), 1800);
+                return;
+            }
+            checkProgressText.innerText = `No backend checker configured; using browser fallback`;
         }
 
         const concurrency = 12;
